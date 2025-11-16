@@ -31,9 +31,7 @@ builds:
     # Target platforms
     goos:
       - linux
-      - darwin
-      - windows
-
+      
     goarch:
       - amd64
       - arm64
@@ -173,8 +171,8 @@ dockers:
 #     enabled: false
 
 # SBOM generation (Software Bill of Materials)
-sboms:
-  - artifacts: archive
+#sboms:
+#  - artifacts: archive
 
 # Signing (optional - requires GPG key setup)
 # signs:
