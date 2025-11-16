@@ -138,20 +138,26 @@ func (db *DB) MarkPostAsScraped(postView *models.PostView, mediaCount int) error
 			post_id, post_title, community_name, community_id,
 			author_name, author_id, post_created, scraped_at,
 			had_media, media_count
-		) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)
+		) VALUES (
+			:post_id, :post_title, :community_name, :community_id,
+			:author_name, :author_id, :post_created, datetime('now'),
+			:had_media, :media_count
+		)
 	`
 
-	_, err := db.Exec(query,
-		postView.Post.ID,
-		postView.Post.Name,
-		postView.Community.Name,
-		postView.Community.ID,
-		postView.Creator.Name,
-		postView.Creator.ID,
-		postView.Post.Published,
-		mediaCount > 0,
-		mediaCount,
-	)
+	params := map[string]interface{}{
+		"post_id":        postView.Post.ID,
+		"post_title":     postView.Post.Name,
+		"community_name": postView.Community.Name,
+		"community_id":   postView.Community.ID,
+		"author_name":    postView.Creator.Name,
+		"author_id":      postView.Creator.ID,
+		"post_created":   postView.Post.Published,
+		"had_media":      mediaCount > 0,
+		"media_count":    mediaCount,
+	}
+
+	_, err := db.NamedExec(query, params)
 	if err != nil {
 		return fmt.Errorf("failed to mark post as scraped: %w", err)
 	}
@@ -167,15 +173,15 @@ func (db *DB) SaveMedia(media *models.ScrapedMedia) error {
 			author_name, author_id, media_url, media_hash,
 			file_name, file_path, file_size, media_type,
 			post_url, post_score, post_created, downloaded_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (
+			:post_id, :post_title, :community_name, :community_id,
+			:author_name, :author_id, :media_url, :media_hash,
+			:file_name, :file_path, :file_size, :media_type,
+			:post_url, :post_score, :post_created, :downloaded_at
+		)
 	`
 
-	result, err := db.Exec(query,
-		media.PostID, media.PostTitle, media.CommunityName, media.CommunityID,
-		media.AuthorName, media.AuthorID, media.MediaURL, media.MediaHash,
-		media.FileName, media.FilePath, media.FileSize, media.MediaType,
-		media.PostURL, media.PostScore, media.PostCreated, media.DownloadedAt,
-	)
+	result, err := db.NamedExec(query, media)
 	if err != nil {
 		return fmt.Errorf("failed to save media: %w", err)
 	}
@@ -287,7 +293,11 @@ func (db *DB) SaveComment(commentView *models.CommentView) error {
 			comment_id, post_id, creator_id, creator_name, content, path,
 			score, upvotes, downvotes, child_count, published, updated,
 			removed, deleted, distinguished, scraped_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		) VALUES (
+			:comment_id, :post_id, :creator_id, :creator_name, :content, :path,
+			:score, :upvotes, :downvotes, :child_count, :published, :updated,
+			:removed, :deleted, :distinguished, datetime('now')
+		)
 	`
 
 	var updated interface{}
@@ -295,23 +305,25 @@ func (db *DB) SaveComment(commentView *models.CommentView) error {
 		updated = commentView.Comment.Updated
 	}
 
-	_, err := db.Exec(query,
-		commentView.Comment.ID,
-		commentView.Comment.PostID,
-		commentView.Creator.ID,
-		commentView.Creator.Name,
-		commentView.Comment.Content,
-		commentView.Comment.Path,
-		commentView.Counts.Score,
-		commentView.Counts.Upvotes,
-		commentView.Counts.Downvotes,
-		commentView.Counts.ChildCount,
-		commentView.Comment.Published,
-		updated,
-		commentView.Comment.Removed,
-		commentView.Comment.Deleted,
-		commentView.Comment.Distinguished,
-	)
+	params := map[string]interface{}{
+		"comment_id":    commentView.Comment.ID,
+		"post_id":       commentView.Comment.PostID,
+		"creator_id":    commentView.Creator.ID,
+		"creator_name":  commentView.Creator.Name,
+		"content":       commentView.Comment.Content,
+		"path":          commentView.Comment.Path,
+		"score":         commentView.Counts.Score,
+		"upvotes":       commentView.Counts.Upvotes,
+		"downvotes":     commentView.Counts.Downvotes,
+		"child_count":   commentView.Counts.ChildCount,
+		"published":     commentView.Comment.Published,
+		"updated":       updated,
+		"removed":       commentView.Comment.Removed,
+		"deleted":       commentView.Comment.Deleted,
+		"distinguished": commentView.Comment.Distinguished,
+	}
+
+	_, err := db.NamedExec(query, params)
 	if err != nil {
 		return fmt.Errorf("failed to save comment: %w", err)
 	}
@@ -477,6 +489,30 @@ func (db *DB) GetMediaWithFilters(filter MediaFilter) ([]models.ScrapedMedia, in
 	}
 
 	return media, total, nil
+}
+
+// CommunityCount represents a community with its media count
+type CommunityCount struct {
+	Name  string `db:"community_name"`
+	Count int    `db:"count"`
+}
+
+// GetCommunities returns a list of communities with their media counts
+func (db *DB) GetCommunities() ([]CommunityCount, error) {
+	query := `
+		SELECT community_name, COUNT(*) as count
+		FROM scraped_media
+		GROUP BY community_name
+		ORDER BY count DESC
+	`
+
+	var communities []CommunityCount
+	err := db.Select(&communities, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query communities: %w", err)
+	}
+
+	return communities, nil
 }
 
 // Close closes the database connection

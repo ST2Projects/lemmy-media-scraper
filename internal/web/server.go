@@ -306,20 +306,7 @@ func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
 
 // handleGetCommunities returns a list of communities with media counts
 func (s *Server) handleGetCommunities(w http.ResponseWriter, r *http.Request) {
-	type CommunityCount struct {
-		Name  string `db:"community_name"`
-		Count int    `db:"count"`
-	}
-
-	query := `
-		SELECT community_name, COUNT(*) as count
-		FROM scraped_media
-		GROUP BY community_name
-		ORDER BY count DESC
-	`
-
-	var communities []CommunityCount
-	err := s.DB.Select(&communities, query)
+	communities, err := s.DB.GetCommunities()
 	if err != nil {
 		log.Errorf("Failed to query communities: %v", err)
 		http.Error(w, "Failed to query communities", http.StatusInternalServerError)
@@ -405,20 +392,7 @@ func (s *Server) handleServeMedia(w http.ResponseWriter, r *http.Request) {
 // Helper functions
 
 func (s *Server) getCommunityList() []map[string]interface{} {
-	type CommunityCount struct {
-		Name  string `db:"community_name"`
-		Count int    `db:"count"`
-	}
-
-	query := `
-		SELECT community_name, COUNT(*) as count
-		FROM scraped_media
-		GROUP BY community_name
-		ORDER BY count DESC
-	`
-
-	var communities []CommunityCount
-	err := s.DB.Select(&communities, query)
+	communities, err := s.DB.GetCommunities()
 	if err != nil {
 		return []map[string]interface{}{}
 	}

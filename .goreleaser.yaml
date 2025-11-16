@@ -108,8 +108,8 @@ changelog:
 # GitHub release configuration
 release:
   github:
-    owner: neo1908
-    name: lemmy-image-scraper
+    owner: ST2Projects
+    name: lemmy-media-scraper
 
   # Release name template
   name_template: "v{{.Version}}"
@@ -137,20 +137,20 @@ release:
 
     Alternatively, use Docker:
     ```bash
-    docker pull ghcr.io/neo1908/lemmy-image-scraper:latest
+    docker pull ghcr.io/ST2Projects/lemmy-media-scraper:latest
     ```
 
     See [README.Docker.md](README.Docker.md) for detailed Docker instructions.
 
     ---
 
-    **Full Changelog**: https://github.com/neo1908/lemmy-image-scraper/compare/{{.PreviousTag}}...{{.Tag}}
+    **Full Changelog**: https://github.com/ST2Projects/lemmy-media-scraper/compare/{{.PreviousTag}}...{{.Tag}}
 
 # Docker image publishing (optional - requires Docker Hub or GHCR setup)
 dockers:
   - image_templates:
-      - "ghcr.io/neo1908/lemmy-image-scraper:{{ .Version }}"
-      - "ghcr.io/neo1908/lemmy-image-scraper:latest"
+      - "ghcr.io/ST2Projects/lemmy-media-scraper:{{ .Version }}"
+      - "ghcr.io/ST2Projects/lemmy-media-scraper:latest"
 
     dockerfile: Dockerfile
 

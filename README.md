@@ -2,6 +2,10 @@
 
 A Go-based tool for scraping and downloading media (images, videos, and other files) from Lemmy instances. Features intelligent deduplication using content hashing and comprehensive metadata storage.
 
+> [!WARNING]
+> This project is almost entriely vibe-coded as an experiment. It works and I've reviewed the code but be careful... 
+
+
 ## Features
 
 - **Multi-instance support**: Connect to any Lemmy instance
@@ -23,18 +27,18 @@ A Go-based tool for scraping and downloading media (images, videos, and other fi
 
 ### Pre-built Binaries
 
-Download the latest release for your platform from the [Releases page](https://github.com/neo1908/lemmy-image-scraper/releases).
+Download the latest release for your platform from the [Releases page](https://github.com/ST2Projects/lemmy-media-scraper/releases).
 
 **Linux (x86_64):**
 ```bash
-wget https://github.com/neo1908/lemmy-image-scraper/releases/latest/download/lemmy-scraper_*_Linux_x86_64.tar.gz
+wget https://github.com/ST2Projects/lemmy-media-scraper/releases/latest/download/lemmy-scraper_*_Linux_x86_64.tar.gz
 tar -xzf lemmy-scraper_*_Linux_x86_64.tar.gz
 ./lemmy-scraper -config config.example.yaml
 ```
 
 **macOS (Apple Silicon):**
 ```bash
-wget https://github.com/neo1908/lemmy-image-scraper/releases/latest/download/lemmy-scraper_*_Darwin_arm64.tar.gz
+wget https://github.com/ST2Projects/lemmy-media-scraper/releases/latest/download/lemmy-scraper_*_Darwin_arm64.tar.gz
 tar -xzf lemmy-scraper_*_Darwin_arm64.tar.gz
 ./lemmy-scraper -config config.example.yaml
 ```
@@ -49,8 +53,8 @@ Each release includes:
 Run with Docker Compose (recommended):
 
 ```bash
-git clone https://github.com/neo1908/lemmy-image-scraper.git
-cd lemmy-image-scraper
+git clone https://github.com/ST2Projects/lemmy-media-scraper.git
+cd lemmy-media-scraper
 mkdir -p config downloads
 cp config.docker.yaml config/config.yaml
 # Edit config/config.yaml with your credentials
@@ -60,7 +64,7 @@ docker-compose up -d
 Or use the pre-built image:
 
 ```bash
-docker pull ghcr.io/neo1908/lemmy-image-scraper:latest
+docker pull ghcr.io/ST2Projects/lemmy-media-scraper:latest
 ```
 
 See [README.Docker.md](README.Docker.md) for detailed Docker deployment instructions.
@@ -68,8 +72,8 @@ See [README.Docker.md](README.Docker.md) for detailed Docker deployment instruct
 ### From Source
 
 ```bash
-git clone https://github.com/neo1908/lemmy-image-scraper.git
-cd lemmy-image-scraper
+git clone https://github.com/ST2Projects/lemmy-media-scraper.git
+cd lemmy-media-scraper
 go build -o lemmy-scraper ./cmd/scraper
 ```
 
@@ -222,8 +226,8 @@ After=network.target
 [Service]
 Type=simple
 User=your-user
-WorkingDirectory=/path/to/lemmy-image-scraper
-ExecStart=/path/to/lemmy-image-scraper/lemmy-scraper -config /path/to/config.yaml
+WorkingDirectory=/path/to/lemmy-media-scraper
+ExecStart=/path/to/lemmy-media-scraper/lemmy-scraper -config /path/to/config.yaml
 Restart=on-failure
 RestartSec=10
 
@@ -244,7 +248,7 @@ sudo systemctl status lemmy-scraper
 Add to crontab for hourly execution:
 
 ```bash
-0 * * * * cd /path/to/lemmy-image-scraper && ./lemmy-scraper -config config.yaml
+0 * * * * cd /path/to/lemmy-media-scraper && ./lemmy-scraper -config config.yaml
 ```
 
 ## How It Works
@@ -271,33 +275,6 @@ Add to crontab for hourly execution:
    - Author info (name, ID)
    - File info (path, size, hash, type)
    - Download timestamp
-
-## Database Schema
-
-The SQLite database contains a single table with the following structure:
-
-```sql
-CREATE TABLE scraped_media (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    post_id INTEGER NOT NULL,
-    post_title TEXT NOT NULL,
-    community_name TEXT NOT NULL,
-    community_id INTEGER NOT NULL,
-    author_name TEXT NOT NULL,
-    author_id INTEGER NOT NULL,
-    media_url TEXT NOT NULL,
-    media_hash TEXT NOT NULL UNIQUE,
-    file_name TEXT NOT NULL,
-    file_path TEXT NOT NULL,
-    file_size INTEGER NOT NULL,
-    media_type TEXT NOT NULL,
-    post_url TEXT NOT NULL,
-    post_score INTEGER NOT NULL,
-    post_created DATETIME NOT NULL,
-    downloaded_at DATETIME NOT NULL,
-    UNIQUE(post_id, media_url)
-);
-```
 
 ## Examples
 
@@ -367,7 +344,7 @@ scraper:
 ## Project Structure
 
 ```
-lemmy-image-scraper/
+lemmy-media-scraper/
 ├── cmd/
 │   └── scraper/          # Main application entry point
 │       └── main.go
@@ -388,10 +365,6 @@ lemmy-image-scraper/
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
-
-## License
-
-MIT License - See LICENSE file for details
 
 ## Disclaimer
 
