@@ -1,4 +1,4 @@
-module github.com/neo1908/lemmy-image-scraper
+module github.com/ST2Projects/lemmy-media-scraper
 
 go 1.25.1
 

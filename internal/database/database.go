@@ -8,7 +8,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/neo1908/lemmy-image-scraper/pkg/models"
+	"github.com/ST2Projects/lemmy-media-scraper/pkg/models"
 )
 
 // DB represents the database connection

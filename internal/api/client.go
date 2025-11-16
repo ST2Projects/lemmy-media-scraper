@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/neo1908/lemmy-image-scraper/pkg/models"
+	"github.com/ST2Projects/lemmy-media-scraper/pkg/models"
 	log "github.com/sirupsen/logrus"
 )
 

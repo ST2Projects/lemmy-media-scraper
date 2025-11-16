@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/neo1908/lemmy-image-scraper/internal/api"
-	"github.com/neo1908/lemmy-image-scraper/internal/config"
-	"github.com/neo1908/lemmy-image-scraper/internal/database"
-	"github.com/neo1908/lemmy-image-scraper/internal/downloader"
-	"github.com/neo1908/lemmy-image-scraper/internal/scraper"
-	"github.com/neo1908/lemmy-image-scraper/internal/web"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/api"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/config"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/database"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/downloader"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/scraper"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/web"
 	log "github.com/sirupsen/logrus"
 )
 

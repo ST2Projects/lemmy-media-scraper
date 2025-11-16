@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/neo1908/lemmy-image-scraper/internal/config"
-	"github.com/neo1908/lemmy-image-scraper/internal/database"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/config"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/database"
 	log "github.com/sirupsen/logrus"
 )
 
