@@ -13,7 +13,6 @@ import (
 
 	"github.com/neo1908/lemmy-image-scraper/internal/config"
 	"github.com/neo1908/lemmy-image-scraper/internal/database"
-	"github.com/neo1908/lemmy-image-scraper/pkg/models"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -179,8 +178,6 @@ func (s *Server) handleGetMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse filter params
-	community := query.Get("community")
-	mediaType := query.Get("type")
 	sortBy := query.Get("sort")
 	if sortBy == "" {
 		sortBy = "downloaded_at"
@@ -191,71 +188,19 @@ func (s *Server) handleGetMedia(w http.ResponseWriter, r *http.Request) {
 		sortOrder = "DESC"
 	}
 
-	// Build SQL query
-	sqlQuery := `
-		SELECT
-			id, post_id, post_title, community_name, community_id,
-			author_name, author_id, media_url, media_hash,
-			file_name, file_path, file_size, media_type,
-			post_url, post_score, post_created, downloaded_at
-		FROM scraped_media
-		WHERE 1=1
-	`
-
-	args := []interface{}{}
-
-	if community != "" {
-		sqlQuery += " AND community_name = ?"
-		args = append(args, community)
+	// Use database layer method for querying
+	filter := database.MediaFilter{
+		Community: query.Get("community"),
+		MediaType: query.Get("type"),
+		SortBy:    sortBy,
+		SortOrder: sortOrder,
+		Limit:     limit,
+		Offset:    offset,
 	}
 
-	if mediaType != "" {
-		sqlQuery += " AND media_type = ?"
-		args = append(args, mediaType)
-	}
-
-	// Add sorting
-	allowedSortFields := map[string]bool{
-		"downloaded_at": true,
-		"post_created":  true,
-		"file_size":     true,
-		"post_score":    true,
-	}
-	if !allowedSortFields[sortBy] {
-		sortBy = "downloaded_at"
-	}
-
-	if sortOrder != "ASC" && sortOrder != "DESC" {
-		sortOrder = "DESC"
-	}
-
-	sqlQuery += fmt.Sprintf(" ORDER BY %s %s LIMIT ? OFFSET ?", sortBy, sortOrder)
-	args = append(args, limit, offset)
-
-	// Get total count
-	countQuery := `SELECT COUNT(*) FROM scraped_media WHERE 1=1`
-	countArgs := []interface{}{}
-	if community != "" {
-		countQuery += " AND community_name = ?"
-		countArgs = append(countArgs, community)
-	}
-	if mediaType != "" {
-		countQuery += " AND media_type = ?"
-		countArgs = append(countArgs, mediaType)
-	}
-
-	var total int
-	if err := s.DB.Get(&total, countQuery, countArgs...); err != nil {
-		log.Errorf("Failed to get total count: %v", err)
-		http.Error(w, "Failed to get count", http.StatusInternalServerError)
-		return
-	}
-
-	// Execute query using sqlx.Select
-	var mediaItems []models.ScrapedMedia
-	err := s.DB.Select(&mediaItems, sqlQuery, args...)
+	mediaItems, total, err := s.DB.GetMediaWithFilters(filter)
 	if err != nil {
-		log.Errorf("Failed to query media: %v", err)
+		log.Errorf("Failed to get media: %v", err)
 		http.Error(w, "Failed to query media", http.StatusInternalServerError)
 		return
 	}
@@ -308,57 +253,37 @@ func (s *Server) handleGetMediaByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		postID, communityID, authorID, fileSize int64
-		postTitle, communityName, authorName    string
-		mediaURL, mediaHash, fileName, filePath string
-		mediaType, postURL                      string
-		postScore                               int
-		postCreated, downloadedAt               string
-	)
-
-	query := `
-		SELECT
-			post_id, post_title, community_name, community_id,
-			author_name, author_id, media_url, media_hash,
-			file_name, file_path, file_size, media_type,
-			post_url, post_score, post_created, downloaded_at
-		FROM scraped_media WHERE id = ?
-	`
-
-	err = s.DB.QueryRow(query, id).Scan(
-		&postID, &postTitle, &communityName, &communityID,
-		&authorName, &authorID, &mediaURL, &mediaHash,
-		&fileName, &filePath, &fileSize, &mediaType,
-		&postURL, &postScore, &postCreated, &downloadedAt,
-	)
-
+	media, err := s.DB.GetMediaByID(id)
 	if err != nil {
+		if err.Error() == "media not found" {
+			http.Error(w, "Media not found", http.StatusNotFound)
+			return
+		}
 		log.Errorf("Failed to get media by ID: %v", err)
-		http.Error(w, "Media not found", http.StatusNotFound)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	serveURL := fmt.Sprintf("/media/%s", filepath.Join(communityName, fileName))
+	serveURL := fmt.Sprintf("/media/%s", filepath.Join(media.CommunityName, media.FileName))
 
 	response := map[string]interface{}{
-		"id":             id,
-		"post_id":        postID,
-		"post_title":     postTitle,
-		"community_name": communityName,
-		"community_id":   communityID,
-		"author_name":    authorName,
-		"author_id":      authorID,
-		"media_url":      mediaURL,
-		"media_hash":     mediaHash,
-		"file_name":      fileName,
-		"file_path":      filePath,
-		"file_size":      fileSize,
-		"media_type":     mediaType,
-		"post_url":       postURL,
-		"post_score":     postScore,
-		"post_created":   postCreated,
-		"downloaded_at":  downloadedAt,
+		"id":             media.ID,
+		"post_id":        media.PostID,
+		"post_title":     media.PostTitle,
+		"community_name": media.CommunityName,
+		"community_id":   media.CommunityID,
+		"author_name":    media.AuthorName,
+		"author_id":      media.AuthorID,
+		"media_url":      media.MediaURL,
+		"media_hash":     media.MediaHash,
+		"file_name":      media.FileName,
+		"file_path":      media.FilePath,
+		"file_size":      media.FileSize,
+		"media_type":     media.MediaType,
+		"post_url":       media.PostURL,
+		"post_score":     media.PostScore,
+		"post_created":   media.PostCreated.Format(time.RFC3339),
+		"downloaded_at":  media.DownloadedAt.Format(time.RFC3339),
 		"serve_url":      serveURL,
 	}
 
@@ -426,12 +351,10 @@ func (s *Server) handleGetComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// First, get the post_id for this media item
-	var postID int64
-	query := `SELECT post_id FROM scraped_media WHERE id = ?`
-	err = s.DB.Get(&postID, query, mediaID)
+	// Get the post_id for this media item
+	postID, err := s.DB.GetPostIDByMediaID(mediaID)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if err.Error() == "media not found" {
 			http.Error(w, "Media not found", http.StatusNotFound)
 			return
 		}
@@ -512,67 +435,19 @@ func (s *Server) getCommunityList() []map[string]interface{} {
 }
 
 func (s *Server) getMediaList(community, mediaType, sortBy, sortOrder string, limit, offset int) ([]map[string]interface{}, int) {
-	sqlQuery := `
-		SELECT
-			id, post_id, post_title, community_name, community_id,
-			author_name, author_id, media_url, media_hash,
-			file_name, file_path, file_size, media_type,
-			post_url, post_score, post_created, downloaded_at
-		FROM scraped_media
-		WHERE 1=1
-	`
-
-	args := []interface{}{}
-
-	if community != "" {
-		sqlQuery += " AND community_name = ?"
-		args = append(args, community)
+	// Use database layer method for querying
+	filter := database.MediaFilter{
+		Community: community,
+		MediaType: mediaType,
+		SortBy:    sortBy,
+		SortOrder: sortOrder,
+		Limit:     limit,
+		Offset:    offset,
 	}
 
-	if mediaType != "" {
-		sqlQuery += " AND media_type = ?"
-		args = append(args, mediaType)
-	}
-
-	// Add sorting
-	allowedSortFields := map[string]bool{
-		"downloaded_at": true,
-		"post_created":  true,
-		"file_size":     true,
-		"post_score":    true,
-	}
-	if !allowedSortFields[sortBy] {
-		sortBy = "downloaded_at"
-	}
-
-	if sortOrder != "ASC" && sortOrder != "DESC" {
-		sortOrder = "DESC"
-	}
-
-	sqlQuery += fmt.Sprintf(" ORDER BY %s %s LIMIT ? OFFSET ?", sortBy, sortOrder)
-	args = append(args, limit, offset)
-
-	// Get total count
-	countQuery := `SELECT COUNT(*) FROM scraped_media WHERE 1=1`
-	countArgs := []interface{}{}
-	if community != "" {
-		countQuery += " AND community_name = ?"
-		countArgs = append(countArgs, community)
-	}
-	if mediaType != "" {
-		countQuery += " AND media_type = ?"
-		countArgs = append(countArgs, mediaType)
-	}
-
-	var total int
-	if err := s.DB.Get(&total, countQuery, countArgs...); err != nil {
-		return []map[string]interface{}{}, 0
-	}
-
-	// Execute query using sqlx.Select with models.ScrapedMedia
-	var mediaItems []models.ScrapedMedia
-	err := s.DB.Select(&mediaItems, sqlQuery, args...)
+	mediaItems, total, err := s.DB.GetMediaWithFilters(filter)
 	if err != nil {
+		log.Errorf("Failed to get media: %v", err)
 		return []map[string]interface{}{}, 0
 	}
 

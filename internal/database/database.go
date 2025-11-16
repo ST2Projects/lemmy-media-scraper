@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
@@ -205,6 +206,22 @@ func (db *DB) GetMediaByHash(hash string) (*models.ScrapedMedia, error) {
 	return media, nil
 }
 
+// GetMediaByID retrieves a media record by its ID
+func (db *DB) GetMediaByID(id int64) (*models.ScrapedMedia, error) {
+	media := &models.ScrapedMedia{}
+	query := `SELECT * FROM scraped_media WHERE id = ?`
+
+	err := db.Get(media, query, id)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return nil, fmt.Errorf("media not found")
+		}
+		return nil, fmt.Errorf("failed to get media by ID: %w", err)
+	}
+
+	return media, nil
+}
+
 // GetStats returns statistics about scraped media
 func (db *DB) GetStats() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
@@ -374,6 +391,92 @@ func (db *DB) CommentsExistForPost(postID int64) (bool, error) {
 		return false, fmt.Errorf("failed to check comments existence: %w", err)
 	}
 	return exists, nil
+}
+
+// GetPostIDByMediaID retrieves the post ID for a media item
+func (db *DB) GetPostIDByMediaID(mediaID int64) (int64, error) {
+	var postID int64
+	query := `SELECT post_id FROM scraped_media WHERE id = ?`
+	err := db.Get(&postID, query, mediaID)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return 0, fmt.Errorf("media not found")
+		}
+		return 0, fmt.Errorf("failed to get post ID: %w", err)
+	}
+	return postID, nil
+}
+
+// MediaFilter represents filter options for querying media
+type MediaFilter struct {
+	Community string
+	MediaType string
+	SortBy    string
+	SortOrder string
+	Limit     int
+	Offset    int
+}
+
+// GetMediaWithFilters retrieves media with optional filters
+func (db *DB) GetMediaWithFilters(filter MediaFilter) ([]models.ScrapedMedia, int, error) {
+	// Build query with filters
+	query := `SELECT * FROM scraped_media`
+	countQuery := `SELECT COUNT(*) FROM scraped_media`
+
+	var whereClauses []string
+	var args []interface{}
+
+	if filter.Community != "" {
+		whereClauses = append(whereClauses, "community_name = ?")
+		args = append(args, filter.Community)
+	}
+
+	if filter.MediaType != "" {
+		whereClauses = append(whereClauses, "media_type = ?")
+		args = append(args, filter.MediaType)
+	}
+
+	// Add WHERE clause if needed
+	if len(whereClauses) > 0 {
+		whereClause := " WHERE " + strings.Join(whereClauses, " AND ")
+		query += whereClause
+		countQuery += whereClause
+	}
+
+	// Get total count
+	var total int
+	if err := db.Get(&total, countQuery, args...); err != nil {
+		return nil, 0, fmt.Errorf("failed to get count: %w", err)
+	}
+
+	// Add sorting and pagination
+	allowedSortFields := map[string]bool{
+		"downloaded_at": true,
+		"post_created":  true,
+		"file_size":     true,
+		"post_score":    true,
+	}
+
+	sortBy := filter.SortBy
+	if !allowedSortFields[sortBy] {
+		sortBy = "downloaded_at"
+	}
+
+	sortOrder := filter.SortOrder
+	if sortOrder != "ASC" && sortOrder != "DESC" {
+		sortOrder = "DESC"
+	}
+
+	query += fmt.Sprintf(" ORDER BY %s %s LIMIT ? OFFSET ?", sortBy, sortOrder)
+	args = append(args, filter.Limit, filter.Offset)
+
+	// Execute query
+	var media []models.ScrapedMedia
+	if err := db.Select(&media, query, args...); err != nil {
+		return nil, 0, fmt.Errorf("failed to query media: %w", err)
+	}
+
+	return media, total, nil
 }
 
 // Close closes the database connection
