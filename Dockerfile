@@ -18,20 +18,7 @@ COPY pkg/ ./pkg/
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o lemmy-scraper ./cmd/scraper
 
-# Stage 2: Build the web UI (optional - only if web directory exists)
-FROM node:20-alpine AS web-builder
-
 WORKDIR /build
-
-# Build web UI if package.json exists
-RUN if [ -f web/package.json ]; then \
-      cd web && \
-      npm ci && \
-      npm run build; \
-    else \
-      echo "Web UI not found, skipping build"; \
-      mkdir -p web/build; \
-    fi
 
 # Stage 3: Final runtime image
 FROM alpine:latest
@@ -51,9 +38,6 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=go-builder /build/lemmy-scraper .
-
-# Copy web UI from builder (if it exists)
-COPY --from=web-builder --chown=scraper:scraper /build/web/build ./web/build
 
 # Switch to non-root user
 USER scraper
