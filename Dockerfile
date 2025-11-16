@@ -23,9 +23,6 @@ FROM node:20-alpine AS web-builder
 
 WORKDIR /build
 
-# Copy web directory if it exists
-COPY web* ./web/ 2>/dev/null || true
-
 # Build web UI if package.json exists
 RUN if [ -f web/package.json ]; then \
       cd web && \
