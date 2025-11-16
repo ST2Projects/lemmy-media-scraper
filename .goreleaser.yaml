@@ -31,7 +31,7 @@ builds:
     # Target platforms
     goos:
       - linux
-      
+
     goarch:
       - amd64
       - arm64
@@ -147,8 +147,8 @@ release:
 # Docker image publishing (optional - requires Docker Hub or GHCR setup)
 dockers:
   - image_templates:
-      - "ghcr.io/ST2Projects/lemmy-media-scraper:{{ .Version }}"
-      - "ghcr.io/ST2Projects/lemmy-media-scraper:latest"
+      - "ghcr.io/st2projects/lemmy-media-scraper:{{ .Version }}"
+      - "ghcr.io/st2projects/lemmy-media-scraper:latest"
 
     dockerfile: Dockerfile
 
