@@ -34,6 +34,42 @@ func New(cfg *config.Config, db *database.DB) *Server {
 	return s
 }
 
+// securityHeadersMiddleware adds security headers to all responses
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Prevent MIME sniffing
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+
+		// Prevent clickjacking
+		w.Header().Set("X-Frame-Options", "DENY")
+
+		// Enable XSS protection (legacy but still useful)
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+
+		// Control referrer information
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+		// Content Security Policy - restrictive but allows HTMX and inline styles
+		csp := "default-src 'self'; " +
+			"script-src 'self' https://unpkg.com 'unsafe-inline'; " +
+			"style-src 'self' 'unsafe-inline'; " +
+			"img-src 'self' data:; " +
+			"font-src 'self'; " +
+			"connect-src 'self'; " +
+			"media-src 'self'; " +
+			"object-src 'none'; " +
+			"frame-ancestors 'none'; " +
+			"base-uri 'self'; " +
+			"form-action 'self'"
+		w.Header().Set("Content-Security-Policy", csp)
+
+		// Permissions Policy (formerly Feature-Policy)
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // setupRoutes configures the HTTP routes
 func (s *Server) setupRoutes() {
 	// Parse embedded templates
@@ -70,7 +106,8 @@ func (s *Server) setupRoutes() {
 	// Serve media files
 	mux.HandleFunc("/media/", s.handleServeMedia)
 
-	s.handler = mux
+	// Wrap with security headers middleware
+	s.handler = securityHeadersMiddleware(mux)
 }
 
 // Start starts the web server
@@ -370,23 +407,49 @@ func (s *Server) handleServeMedia(w http.ResponseWriter, r *http.Request) {
 	// Extract path after /media/
 	mediaPath := strings.TrimPrefix(r.URL.Path, "/media/")
 
-	// Prevent directory traversal
-	if strings.Contains(mediaPath, "..") {
+	// Prevent directory traversal - comprehensive protection
+	// 1. Clean the path to resolve .. and . components
+	cleanedPath := filepath.Clean(mediaPath)
+
+	// 2. Reject absolute paths or paths starting with ..
+	if filepath.IsAbs(cleanedPath) || strings.HasPrefix(cleanedPath, "..") {
+		log.Warnf("Blocked path traversal attempt: %s", r.URL.Path)
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 
-	// Construct full file path
-	fullPath := filepath.Join(s.Config.Storage.BaseDirectory, mediaPath)
+	// 3. Construct full file path
+	baseDir := filepath.Clean(s.Config.Storage.BaseDirectory)
+	fullPath := filepath.Join(baseDir, cleanedPath)
+
+	// 4. Ensure the resolved path is still within the base directory
+	// This protects against symlink attacks and other bypasses
+	resolvedPath, err := filepath.EvalSymlinks(fullPath)
+	if err != nil {
+		// If we can't resolve symlinks, check if file exists first
+		if _, statErr := os.Stat(fullPath); statErr != nil {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+		// File exists but we can't resolve symlinks - allow it
+		resolvedPath = fullPath
+	}
+
+	// Ensure resolved path is within base directory
+	if !strings.HasPrefix(resolvedPath, baseDir) {
+		log.Warnf("Blocked access outside base directory: %s -> %s", r.URL.Path, resolvedPath)
+		http.Error(w, "Invalid path", http.StatusForbidden)
+		return
+	}
 
 	// Check if file exists
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+	if _, err := os.Stat(resolvedPath); os.IsNotExist(err) {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
 
 	// Serve the file
-	http.ServeFile(w, r, fullPath)
+	http.ServeFile(w, r, resolvedPath)
 }
 
 // Helper functions
@@ -479,7 +542,9 @@ const indexTemplate = `{{define "index"}}
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lemmy Media Browser</title>
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"
+            integrity="sha384-QFjmbokDn2DjBjq+fM+8LUIVrAgqcNW2s0PjAxHETgRn9l4fvX31ZxDxvwQnyMOX"
+            crossorigin="anonymous"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -849,28 +914,32 @@ const indexTemplate = `{{define "index"}}
         };
 
         function showModal(item) {
+            // Validate URLs to prevent XSS in href/src attributes
+            const safeServeUrl = sanitizeUrl(item.serve_url);
+            const safePostUrl = sanitizeUrl(item.post_url);
+
             let mediaHTML = '';
             if (item.media_type === 'image') {
-                mediaHTML = '<img src="' + item.serve_url + '" class="modal-image" alt="' + item.post_title + '">';
+                mediaHTML = '<img src="' + safeServeUrl + '" class="modal-image" alt="' + escapeHtml(item.post_title) + '">';
             } else if (item.media_type === 'video') {
-                mediaHTML = '<video src="' + item.serve_url + '" class="modal-video" controls></video>';
+                mediaHTML = '<video src="' + safeServeUrl + '" class="modal-video" controls></video>';
             } else {
-                mediaHTML = '<div style="text-align:center;padding:32px;">Preview not available. <a href="' + item.serve_url + '" class="modal-link" download>Download</a></div>';
+                mediaHTML = '<div style="text-align:center;padding:32px;">Preview not available. <a href="' + safeServeUrl + '" class="modal-link" download>Download</a></div>';
             }
 
             document.getElementById('modal-body').innerHTML =
                 '<div class="modal-header">' +
-                    '<div class="modal-title">' + item.post_title + '</div>' +
+                    '<div class="modal-title">' + escapeHtml(item.post_title) + '</div>' +
                     '<button class="modal-close" onclick="document.getElementById(\'modal\').classList.remove(\'active\')">&times;</button>' +
                 '</div>' +
                 '<div class="modal-body">' +
                     mediaHTML +
                     '<div class="modal-meta">' +
-                        '<div><strong>Author:</strong> ' + item.author_name + '</div>' +
-                        '<div><strong>Community:</strong> ' + item.community_name + '</div>' +
-                        '<div><strong>Score:</strong> ' + item.post_score + '</div>' +
-                        '<div><strong>Type:</strong> ' + item.media_type + '</div>' +
-                        '<div style="grid-column: 1/-1"><strong>Post:</strong> <a href="' + item.post_url + '" target="_blank" class="modal-link">' + item.post_url + '</a></div>' +
+                        '<div><strong>Author:</strong> ' + escapeHtml(item.author_name) + '</div>' +
+                        '<div><strong>Community:</strong> ' + escapeHtml(item.community_name) + '</div>' +
+                        '<div><strong>Score:</strong> ' + escapeHtml(String(item.post_score)) + '</div>' +
+                        '<div><strong>Type:</strong> ' + escapeHtml(item.media_type) + '</div>' +
+                        '<div style="grid-column: 1/-1"><strong>Post:</strong> <a href="' + safePostUrl + '" target="_blank" rel="noopener noreferrer" class="modal-link">' + escapeHtml(item.post_url) + '</a></div>' +
                     '</div>' +
                     '<div class="comments-section" id="comments-section">' +
                         '<div class="loading-comments">Loading comments...</div>' +
@@ -957,6 +1026,36 @@ const indexTemplate = `{{define "index"}}
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function sanitizeUrl(url) {
+            // Prevent javascript: and data: URLs for XSS protection
+            if (!url) return '';
+
+            const urlLower = url.toLowerCase().trim();
+
+            // Block dangerous URL schemes
+            const dangerousSchemes = ['javascript:', 'data:', 'vbscript:', 'file:'];
+            for (const scheme of dangerousSchemes) {
+                if (urlLower.startsWith(scheme)) {
+                    console.warn('Blocked dangerous URL scheme:', url);
+                    return '#';
+                }
+            }
+
+            // Only allow http, https, and relative URLs
+            if (urlLower.startsWith('http://') || urlLower.startsWith('https://') || url.startsWith('/')) {
+                return url;
+            }
+
+            // Relative URLs without leading slash
+            if (!url.includes(':')) {
+                return url;
+            }
+
+            // Unknown scheme - block it
+            console.warn('Blocked unknown URL scheme:', url);
+            return '#';
         }
     </script>
 </body>

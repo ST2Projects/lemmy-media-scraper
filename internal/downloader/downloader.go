@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +42,11 @@ func (d *Downloader) DownloadMedia(mediaURL string, postView models.PostView) (*
 		return nil, fmt.Errorf("empty media URL")
 	}
 
+	// Validate URL to prevent SSRF attacks
+	if err := validateURL(mediaURL); err != nil {
+		return nil, fmt.Errorf("invalid media URL: %w", err)
+	}
+
 	log.Debugf("Attempting to download media from: %s", mediaURL)
 
 	// Download the file content
@@ -53,10 +60,27 @@ func (d *Downloader) DownloadMedia(mediaURL string, postView models.PostView) (*
 		return nil, fmt.Errorf("download failed with status %d", resp.StatusCode)
 	}
 
-	// Read content into memory for hashing and writing
-	content, err := io.ReadAll(resp.Body)
+	// Check Content-Length header if available
+	const maxFileSize = 500 * 1024 * 1024 // 500 MB limit
+	if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+		if size, err := strconv.ParseInt(contentLength, 10, 64); err == nil {
+			if size > maxFileSize {
+				return nil, fmt.Errorf("file too large: %d bytes (max %d)", size, maxFileSize)
+			}
+		}
+	}
+
+	// Read content into memory with size limit for hashing and writing
+	// Use LimitReader to prevent memory exhaustion
+	limitedReader := io.LimitReader(resp.Body, maxFileSize+1) // +1 to detect oversized files
+	content, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read media content: %w", err)
+	}
+
+	// Check if file exceeded size limit
+	if int64(len(content)) > maxFileSize {
+		return nil, fmt.Errorf("file too large: exceeds %d bytes", maxFileSize)
 	}
 
 	// Calculate hash
@@ -94,17 +118,20 @@ func (d *Downloader) DownloadMedia(mediaURL string, postView models.PostView) (*
 		fileName = fmt.Sprintf("%d%s", postView.Post.ID, fileExt)
 	}
 
-	// Create community directory
+	// Sanitize filename to prevent issues with special characters
+	fileName = sanitizePath(fileName)
+
+	// Create community directory with restrictive permissions
 	communityDir := filepath.Join(d.BaseDir, sanitizePath(postView.Community.Name))
-	if err := os.MkdirAll(communityDir, 0755); err != nil {
+	if err := os.MkdirAll(communityDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create community directory: %w", err)
 	}
 
 	// Full file path
 	filePath := filepath.Join(communityDir, fileName)
 
-	// Write file to disk
-	if err := os.WriteFile(filePath, content, 0644); err != nil {
+	// Write file to disk with restrictive permissions (owner read/write only)
+	if err := os.WriteFile(filePath, content, 0600); err != nil {
 		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
 
@@ -216,4 +243,76 @@ func ShouldDownload(url string, includeImages, includeVideos, includeOther bool)
 	default:
 		return false
 	}
+}
+
+// validateURL validates a URL to prevent SSRF attacks
+func validateURL(urlStr string) error {
+	// Parse the URL
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return fmt.Errorf("invalid URL format: %w", err)
+	}
+
+	// Only allow HTTP and HTTPS schemes
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return fmt.Errorf("invalid URL scheme: %s (only http and https allowed)", parsedURL.Scheme)
+	}
+
+	// Ensure hostname is present
+	if parsedURL.Host == "" {
+		return fmt.Errorf("URL must have a hostname")
+	}
+
+	// Prevent access to private/local IP ranges and localhost
+	// This is a basic check - for production, consider using a library like net.ParseIP
+	// and checking against reserved IP ranges
+	hostname := strings.ToLower(parsedURL.Hostname())
+
+	// Block localhost and common local addresses
+	localAddresses := []string{
+		"localhost",
+		"127.0.0.1",
+		"0.0.0.0",
+		"[::1]",
+		"::1",
+	}
+
+	for _, local := range localAddresses {
+		if hostname == local {
+			return fmt.Errorf("access to localhost is not allowed")
+		}
+	}
+
+	// Block common private IP ranges (simplified check)
+	privateRanges := []string{
+		"10.",        // 10.0.0.0/8
+		"172.16.",    // 172.16.0.0/12 (partial check)
+		"172.17.",
+		"172.18.",
+		"172.19.",
+		"172.20.",
+		"172.21.",
+		"172.22.",
+		"172.23.",
+		"172.24.",
+		"172.25.",
+		"172.26.",
+		"172.27.",
+		"172.28.",
+		"172.29.",
+		"172.30.",
+		"172.31.",
+		"192.168.",   // 192.168.0.0/16
+		"169.254.",   // 169.254.0.0/16 (link-local)
+		"fc00:",      // IPv6 private
+		"fd",         // IPv6 private
+	}
+
+	for _, privateRange := range privateRanges {
+		if strings.HasPrefix(hostname, privateRange) {
+			return fmt.Errorf("access to private IP ranges is not allowed")
+		}
+	}
+
+	return nil
 }
