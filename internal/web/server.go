@@ -543,7 +543,7 @@ const indexTemplate = `{{define "index"}}
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lemmy Media Browser</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"
-            integrity="sha384-QFjmbokDn2DjBjq+fM+8LUIVrAgqcNW2s0PjAxHETgRn9l4fvX31ZxDxvwQnyMOX"
+            integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC"
             crossorigin="anonymous"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
