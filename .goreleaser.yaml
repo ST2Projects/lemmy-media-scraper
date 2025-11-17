@@ -14,9 +14,6 @@ builds:
     main: ./cmd/scraper
     binary: lemmy-scraper
 
-    env:
-      - CGO_ENABLED=1
-
     # Build flags
     flags:
       - -trimpath
