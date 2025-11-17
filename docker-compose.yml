@@ -3,7 +3,7 @@ version: '3.8'
 services:
   lemmy-scraper:
     # Pull from GitHub Container Registry
-    image: ghcr.io/st2projects/lemmy-media-scraper:0.0.7-next-amd64
+    image: ghcr.io/st2projects/lemmy-media-scraper:latest
 
     # For local development, use build instead:
     # build:

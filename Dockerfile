@@ -1,13 +1,16 @@
 # Dockerfile for GoReleaser
 # This uses the pre-built binary from GoReleaser's build step
-FROM alpine:latest
+FROM debian:bookworm-slim
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN addgroup -g 1000 scraper && \
-    adduser -D -u 1000 -G scraper scraper
+RUN groupadd -g 1000 scraper && \
+    useradd -u 1000 -g scraper -s /bin/bash -m scraper
 
 # Create application directories
 RUN mkdir -p /app /config /downloads && \
