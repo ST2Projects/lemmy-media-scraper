@@ -46,13 +46,6 @@ builds:
 
 archives:
   - id: default
-    format: tar.gz
-
-    # Use zip for Windows
-    format_overrides:
-      - goos: windows
-        format: zip
-
     # Archive name template
     name_template: >-
       {{ .ProjectName }}_
@@ -77,7 +70,7 @@ checksum:
   algorithm: sha256
 
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
@@ -144,24 +137,20 @@ release:
 
     **Full Changelog**: https://github.com/ST2Projects/lemmy-media-scraper/compare/{{.PreviousTag}}...{{.Tag}}
 
-# Docker image publishing (optional - requires Docker Hub or GHCR setup)
-#dockers:
-#  - image_templates:
-#      - "ghcr.io/st2projects/lemmy-media-scraper:{{ .Version }}"
-#      - "ghcr.io/st2projects/lemmy-media-scraper:latest"
-#
-#    dockerfile: Dockerfile
-#
-#    build_flag_templates:
-#      - "--pull"
-#      - "--label=org.opencontainers.image.created={{.Date}}"
-#      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-#      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-#      - "--label=org.opencontainers.image.version={{.Version}}"
-#      - "--label=org.opencontainers.image.source={{.GitURL}}"
-#
-#    # Skip Docker build if not in CI or if --skip-publish flag is set
-#    skip_push: auto
+# Docker image publishing
+dockers_v2:
+  - images:
+      - "ghcr.io/st2projects/lemmy-media-scraper"
+    tags:
+      - "{{ .Version }}"
+      - "latest"
+    labels:
+      org.opencontainers.image.created: "{{.Date}}"
+      org.opencontainers.image.title: "{{.ProjectName}}"
+      org.opencontainers.image.revision: "{{.FullCommit}}"
+      org.opencontainers.image.version: "{{.Version}}"
+      org.opencontainers.image.source: "{{.GitURL}}"
+    dockerfile: Dockerfile
 
 # Announce new releases (optional)
 # announce:

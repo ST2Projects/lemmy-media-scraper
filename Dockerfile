@@ -1,26 +1,5 @@
-# Stage 1: Build the Go application
-FROM golang:1.25.4-alpine AS go-builder
-
-# Install build dependencies
-RUN apk add --no-cache git ca-certificates
-
-WORKDIR /build
-
-# Copy go mod files
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Copy source code
-COPY ./cmd/ ./cmd/
-COPY ./internal/ ./internal/
-COPY ./pkg/ ./pkg/
-
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o lemmy-scraper ./cmd/scraper
-
-WORKDIR /build
-
-# Stage 3: Final runtime image
+# Dockerfile for GoReleaser
+# This uses the pre-built binary from GoReleaser's build step
 FROM alpine:latest
 
 # Install runtime dependencies
@@ -36,8 +15,9 @@ RUN mkdir -p /app /config /downloads && \
 
 WORKDIR /app
 
-# Copy binary from builder
-COPY --from=go-builder /build/lemmy-scraper .
+# Copy the pre-built binary (goreleaser provides platform-specific path)
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/lemmy-scraper .
 
 # Switch to non-root user
 USER scraper
