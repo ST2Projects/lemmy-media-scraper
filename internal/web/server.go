@@ -18,17 +18,19 @@ import (
 
 // Server represents the web server
 type Server struct {
-	Config    *config.Config
-	DB        *database.DB
-	handler   http.Handler
-	templates *template.Template
+	Config     *config.Config
+	ConfigPath string
+	DB         *database.DB
+	handler    http.Handler
+	templates  *template.Template
 }
 
 // New creates a new web server
-func New(cfg *config.Config, db *database.DB) *Server {
+func New(cfg *config.Config, configPath string, db *database.DB) *Server {
 	s := &Server{
-		Config: cfg,
-		DB:     db,
+		Config:     cfg,
+		ConfigPath: configPath,
+		DB:         db,
 	}
 	s.setupRoutes()
 	return s
@@ -78,12 +80,15 @@ func (s *Server) setupRoutes() {
 		"formatDate":     formatDate,
 		"add": func(a, b int) int { return a + b },
 		"sub": func(a, b int) int { return a - b },
-	}).Parse(indexTemplate + mediaGridTemplate + mediaModalTemplate))
+	}).Parse(indexTemplate + mediaGridTemplate + mediaModalTemplate + settingsTemplate))
 
 	mux := http.NewServeMux()
 
 	// Main page
 	mux.HandleFunc("/", s.handleIndex)
+
+	// Settings page
+	mux.HandleFunc("/settings", s.handleSettings)
 
 	// HTMX endpoints
 	mux.HandleFunc("/media-grid", s.handleMediaGrid)
@@ -102,6 +107,7 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("/api/stats", s.handleGetStats)
 	mux.HandleFunc("/api/communities", s.handleGetCommunities)
 	mux.HandleFunc("/api/comments/", s.handleGetComments)
+	mux.HandleFunc("/api/config", s.handleConfig)
 
 	// Serve media files
 	mux.HandleFunc("/media/", s.handleServeMedia)
@@ -135,6 +141,15 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "index", data); err != nil {
+		log.Errorf("Template error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// handleSettings serves the settings page
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "settings", nil); err != nil {
 		log.Errorf("Template error: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
@@ -402,6 +417,70 @@ func (s *Server) handleGetComments(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleConfig handles GET and PUT requests for configuration management
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleGetConfig(w, r)
+	case http.MethodPut:
+		s.handleUpdateConfig(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleGetConfig returns the current configuration
+func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	// Return config without sensitive information (password)
+	safeCfg := *s.Config
+	safeCfg.Lemmy.Password = "" // Don't expose password
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(safeCfg)
+}
+
+// handleUpdateConfig updates the configuration and saves it to file
+func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
+	var newConfig config.Config
+	if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// If password is empty (not changed), keep the existing one
+	if newConfig.Lemmy.Password == "" {
+		newConfig.Lemmy.Password = s.Config.Lemmy.Password
+	}
+
+	// Validate the new configuration
+	if err := newConfig.Validate(); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid configuration: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Set defaults for any missing optional fields
+	newConfig.SetDefaults()
+
+	// Save to file
+	if err := config.SaveConfig(s.ConfigPath, &newConfig); err != nil {
+		log.Errorf("Failed to save config: %v", err)
+		http.Error(w, "Failed to save configuration", http.StatusInternalServerError)
+		return
+	}
+
+	// Update the in-memory config
+	s.Config = &newConfig
+
+	log.Info("Configuration updated successfully")
+
+	// Return success response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Configuration updated successfully. Restart the application for all changes to take effect.",
+	})
+}
+
 // handleServeMedia serves media files from the storage directory
 func (s *Server) handleServeMedia(w http.ResponseWriter, r *http.Request) {
 	// Extract path after /media/
@@ -569,6 +648,18 @@ const indexTemplate = `{{define "index"}}
             align-items: center;
         }
         .header h1 { font-size: 24px; font-weight: 600; color: #fff; }
+        .header-nav {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+        .header-nav a {
+            color: #999;
+            text-decoration: none;
+            font-size: 14px;
+            transition: color 0.2s;
+        }
+        .header-nav a:hover { color: #e0e0e0; }
         .stats {
             display: flex;
             gap: 24px;
@@ -841,13 +932,16 @@ const indexTemplate = `{{define "index"}}
     <div class="header">
         <div class="header-content">
             <h1>Lemmy Media</h1>
-            <div class="stats">
-                {{if .Stats.total_media}}
-                    <div><span>{{.Stats.total_media}}</span> items</div>
-                    {{range $type, $count := .Stats.by_type}}
-                        <div><span>{{$count}}</span> {{$type}}</div>
+            <div class="header-nav">
+                <div class="stats">
+                    {{if .Stats.total_media}}
+                        <div><span>{{.Stats.total_media}}</span> items</div>
+                        {{range $type, $count := .Stats.by_type}}
+                            <div><span>{{$count}}</span> {{$type}}</div>
+                        {{end}}
                     {{end}}
-                {{end}}
+                </div>
+                <a href="/settings">⚙️ Settings</a>
             </div>
         </div>
     </div>
@@ -1114,3 +1208,508 @@ const mediaGridTemplate = `{{define "media-grid"}}
 {{end}}`
 
 const mediaModalTemplate = ``
+
+const settingsTemplate = `{{define "settings"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - Lemmy Media Browser</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"
+            integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC"
+            crossorigin="anonymous"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #0f0f0f;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+        .header {
+            background: #1a1a1a;
+            border-bottom: 1px solid #2a2a2a;
+            padding: 12px 16px;
+        }
+        .header-content {
+            max-width: 1000px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { font-size: 24px; font-weight: 600; color: #fff; }
+        .back-link {
+            color: #4a9eff;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .back-link:hover { text-decoration: underline; }
+        .content {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 32px 16px;
+        }
+        .section {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #fff;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 6px;
+            color: #e0e0e0;
+        }
+        .form-group .help-text {
+            font-size: 12px;
+            color: #999;
+            margin-top: 4px;
+        }
+        input[type="text"],
+        input[type="password"],
+        input[type="number"],
+        select,
+        textarea {
+            width: 100%;
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #3a3a3a;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+            cursor: pointer;
+        }
+        .btn {
+            background: #4a9eff;
+            color: #fff;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #3a8eef; }
+        .btn:disabled {
+            background: #2a2a2a;
+            color: #666;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #3a3a3a;
+        }
+        .btn-secondary:hover { background: #333; }
+        .alert {
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .alert-success {
+            background: #1a3a1a;
+            border: 1px solid #2a5a2a;
+            color: #6fd46f;
+        }
+        .alert-error {
+            background: #3a1a1a;
+            border: 1px solid #5a2a2a;
+            color: #f46f6f;
+        }
+        .alert-warning {
+            background: #3a3a1a;
+            border: 1px solid #5a5a2a;
+            color: #f4d46f;
+        }
+        .form-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+        .loading {
+            text-align: center;
+            padding: 32px;
+            color: #999;
+        }
+        .communities-input {
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1>Settings</h1>
+            <a href="/" class="back-link">← Back to Media</a>
+        </div>
+    </div>
+
+    <div class="content">
+        <div id="alert-container"></div>
+
+        <form id="config-form">
+            <div class="section">
+                <div class="section-title">Lemmy Instance</div>
+                <div class="form-group">
+                    <label for="instance">Instance</label>
+                    <input type="text" id="instance" name="instance" placeholder="lemmy.ml" required>
+                    <div class="help-text">The Lemmy instance domain (e.g., lemmy.ml, lemmy.world)</div>
+                </div>
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Leave empty to keep current">
+                    <div class="help-text">Leave empty to keep the current password</div>
+                </div>
+                <div class="form-group">
+                    <label for="communities">Communities</label>
+                    <textarea id="communities" name="communities" class="communities-input" placeholder='["technology", "linux"]'></textarea>
+                    <div class="help-text">JSON array of community names. Empty array [] scrapes from instance hot page.</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">Storage</div>
+                <div class="form-group">
+                    <label for="base_directory">Base Directory</label>
+                    <input type="text" id="base_directory" name="base_directory" placeholder="./downloads" required>
+                    <div class="help-text">Where to save downloaded media files</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">Database</div>
+                <div class="form-group">
+                    <label for="database_path">Database Path</label>
+                    <input type="text" id="database_path" name="database_path" placeholder="./scraper.db" required>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">Scraper Settings</div>
+                <div class="form-group">
+                    <label for="max_posts_per_run">Max Posts Per Run</label>
+                    <input type="number" id="max_posts_per_run" name="max_posts_per_run" min="1" required>
+                    <div class="help-text">Maximum number of posts to scrape per run</div>
+                </div>
+                <div class="form-group">
+                    <label for="sort_type">Sort Type</label>
+                    <select id="sort_type" name="sort_type">
+                        <option value="Hot">Hot</option>
+                        <option value="New">New</option>
+                        <option value="TopDay">Top Day</option>
+                        <option value="TopWeek">Top Week</option>
+                        <option value="TopMonth">Top Month</option>
+                        <option value="TopYear">Top Year</option>
+                        <option value="TopAll">Top All</option>
+                        <option value="Active">Active</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="seen_posts_threshold">Seen Posts Threshold</label>
+                    <input type="number" id="seen_posts_threshold" name="seen_posts_threshold" min="1">
+                    <div class="help-text">Stop after encountering this many consecutive seen posts</div>
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="stop_at_seen_posts" name="stop_at_seen_posts">
+                        <label for="stop_at_seen_posts">Stop at seen posts</label>
+                    </div>
+                    <div class="help-text">Stop scraping after hitting threshold of consecutive seen posts</div>
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="skip_seen_posts" name="skip_seen_posts">
+                        <label for="skip_seen_posts">Skip seen posts</label>
+                    </div>
+                    <div class="help-text">Skip seen posts but continue scraping (use with caution)</div>
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="enable_pagination" name="enable_pagination">
+                        <label for="enable_pagination">Enable pagination</label>
+                    </div>
+                    <div class="help-text">Fetch multiple pages to get more than 50 posts</div>
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="include_images" name="include_images">
+                        <label for="include_images">Download images</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="include_videos" name="include_videos">
+                        <label for="include_videos">Download videos</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="include_other_media" name="include_other_media">
+                        <label for="include_other_media">Download other media</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">Run Mode</div>
+                <div class="form-group">
+                    <label for="run_mode">Mode</label>
+                    <select id="run_mode" name="run_mode">
+                        <option value="once">Once</option>
+                        <option value="continuous">Continuous</option>
+                    </select>
+                </div>
+                <div class="form-group" id="interval-group">
+                    <label for="interval">Interval</label>
+                    <input type="text" id="interval" name="interval" placeholder="5m">
+                    <div class="help-text">For continuous mode (e.g., "5m", "1h", "30m")</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">Web Server</div>
+                <div class="form-group">
+                    <label for="web_host">Host</label>
+                    <input type="text" id="web_host" name="web_host" placeholder="localhost">
+                    <div class="help-text">Host to bind to (use 0.0.0.0 for external access)</div>
+                </div>
+                <div class="form-group">
+                    <label for="web_port">Port</label>
+                    <input type="number" id="web_port" name="web_port" min="1" max="65535">
+                </div>
+            </div>
+
+            <div class="alert alert-warning">
+                <strong>Note:</strong> Changes will be saved to the config file. Some settings may require restarting the application to take effect.
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn">Save Configuration</button>
+                <button type="button" class="btn btn-secondary" onclick="loadConfig()">Reset Form</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        let currentConfig = null;
+
+        // Load configuration on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadConfig();
+
+            // Toggle interval field visibility based on run mode
+            document.getElementById('run_mode').addEventListener('change', (e) => {
+                const intervalGroup = document.getElementById('interval-group');
+                intervalGroup.style.display = e.target.value === 'continuous' ? 'block' : 'none';
+            });
+        });
+
+        function loadConfig() {
+            showAlert('Loading configuration...', 'info');
+
+            fetch('/api/config')
+                .then(r => r.json())
+                .then(config => {
+                    currentConfig = config;
+                    populateForm(config);
+                    clearAlert();
+                })
+                .catch(err => {
+                    showAlert('Failed to load configuration: ' + err.message, 'error');
+                });
+        }
+
+        function populateForm(config) {
+            document.getElementById('instance').value = config.lemmy.instance || '';
+            document.getElementById('username').value = config.lemmy.username || '';
+            document.getElementById('password').value = '';
+            document.getElementById('communities').value = JSON.stringify(config.lemmy.communities || [], null, 2);
+
+            document.getElementById('base_directory').value = config.storage.base_directory || '';
+            document.getElementById('database_path').value = config.database.path || '';
+
+            document.getElementById('max_posts_per_run').value = config.scraper.max_posts_per_run || 50;
+            document.getElementById('sort_type').value = config.scraper.sort_type || 'Hot';
+            document.getElementById('seen_posts_threshold').value = config.scraper.seen_posts_threshold || 5;
+            document.getElementById('stop_at_seen_posts').checked = config.scraper.stop_at_seen_posts || false;
+            document.getElementById('skip_seen_posts').checked = config.scraper.skip_seen_posts || false;
+            document.getElementById('enable_pagination').checked = config.scraper.enable_pagination || false;
+            document.getElementById('include_images').checked = config.scraper.include_images || false;
+            document.getElementById('include_videos').checked = config.scraper.include_videos || false;
+            document.getElementById('include_other_media').checked = config.scraper.include_other_media || false;
+
+            document.getElementById('run_mode').value = config.run_mode.mode || 'once';
+            const intervalNs = config.run_mode.interval || 0;
+            const intervalStr = intervalNs ? formatDuration(intervalNs) : '5m';
+            document.getElementById('interval').value = intervalStr;
+
+            const intervalGroup = document.getElementById('interval-group');
+            intervalGroup.style.display = config.run_mode.mode === 'continuous' ? 'block' : 'none';
+
+            document.getElementById('web_host').value = config.web_server.host || 'localhost';
+            document.getElementById('web_port').value = config.web_server.port || 8080;
+        }
+
+        function formatDuration(ns) {
+            const minutes = Math.floor(ns / (60 * 1000000000));
+            const hours = Math.floor(minutes / 60);
+
+            if (hours > 0) {
+                return hours + 'h';
+            } else {
+                return minutes + 'm';
+            }
+        }
+
+        document.getElementById('config-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveConfig();
+        });
+
+        function saveConfig() {
+            const formData = new FormData(document.getElementById('config-form'));
+
+            try {
+                const communities = JSON.parse(document.getElementById('communities').value || '[]');
+
+                const config = {
+                    lemmy: {
+                        instance: formData.get('instance'),
+                        username: formData.get('username'),
+                        password: formData.get('password') || '',
+                        communities: communities
+                    },
+                    storage: {
+                        base_directory: formData.get('base_directory')
+                    },
+                    database: {
+                        path: formData.get('database_path')
+                    },
+                    scraper: {
+                        max_posts_per_run: parseInt(formData.get('max_posts_per_run')),
+                        sort_type: formData.get('sort_type'),
+                        seen_posts_threshold: parseInt(formData.get('seen_posts_threshold')),
+                        stop_at_seen_posts: formData.get('stop_at_seen_posts') === 'on',
+                        skip_seen_posts: formData.get('skip_seen_posts') === 'on',
+                        enable_pagination: formData.get('enable_pagination') === 'on',
+                        include_images: formData.get('include_images') === 'on',
+                        include_videos: formData.get('include_videos') === 'on',
+                        include_other_media: formData.get('include_other_media') === 'on'
+                    },
+                    run_mode: {
+                        mode: formData.get('run_mode'),
+                        interval: parseDuration(formData.get('interval'))
+                    },
+                    web_server: {
+                        enabled: true,
+                        host: formData.get('web_host'),
+                        port: parseInt(formData.get('web_port'))
+                    }
+                };
+
+                showAlert('Saving configuration...', 'info');
+
+                fetch('/api/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(config)
+                })
+                .then(r => {
+                    if (!r.ok) {
+                        return r.text().then(text => { throw new Error(text); });
+                    }
+                    return r.json();
+                })
+                .then(data => {
+                    showAlert(data.message || 'Configuration saved successfully!', 'success');
+                    setTimeout(() => loadConfig(), 1000);
+                })
+                .catch(err => {
+                    showAlert('Failed to save configuration: ' + err.message, 'error');
+                });
+
+            } catch (err) {
+                showAlert('Invalid form data: ' + err.message, 'error');
+            }
+        }
+
+        function parseDuration(str) {
+            if (!str) return 0;
+
+            const match = str.match(/^(\d+)([smh])$/);
+            if (!match) return 0;
+
+            const value = parseInt(match[1]);
+            const unit = match[2];
+
+            switch (unit) {
+                case 's': return value * 1000000000;
+                case 'm': return value * 60 * 1000000000;
+                case 'h': return value * 3600 * 1000000000;
+                default: return 0;
+            }
+        }
+
+        function showAlert(message, type) {
+            const container = document.getElementById('alert-container');
+            const alertClass = type === 'error' ? 'alert-error' :
+                              type === 'success' ? 'alert-success' :
+                              'alert-warning';
+
+            container.innerHTML = '<div class="alert ' + alertClass + '">' + escapeHtml(message) + '</div>';
+            container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function clearAlert() {
+            document.getElementById('alert-container').innerHTML = '';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
+{{end}}`
