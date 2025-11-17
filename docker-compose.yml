@@ -2,9 +2,14 @@ version: '3.8'
 
 services:
   lemmy-scraper:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Pull from GitHub Container Registry
+    image: ghcr.io/st2projects/lemmy-media-scraper:latest
+
+    # For local development, use build instead:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+
     container_name: lemmy-scraper
     restart: unless-stopped
 

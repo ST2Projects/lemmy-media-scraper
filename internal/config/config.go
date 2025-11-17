@@ -10,56 +10,56 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	Lemmy      LemmyConfig      `yaml:"lemmy"`
-	Storage    StorageConfig    `yaml:"storage"`
-	Database   DatabaseConfig   `yaml:"database"`
-	Scraper    ScraperConfig    `yaml:"scraper"`
-	RunMode    RunModeConfig    `yaml:"run_mode"`
-	WebServer  WebServerConfig  `yaml:"web_server"`
+	Lemmy      LemmyConfig      `yaml:"lemmy" json:"lemmy"`
+	Storage    StorageConfig    `yaml:"storage" json:"storage"`
+	Database   DatabaseConfig   `yaml:"database" json:"database"`
+	Scraper    ScraperConfig    `yaml:"scraper" json:"scraper"`
+	RunMode    RunModeConfig    `yaml:"run_mode" json:"run_mode"`
+	WebServer  WebServerConfig  `yaml:"web_server" json:"web_server"`
 }
 
 // LemmyConfig contains Lemmy instance and authentication settings
 type LemmyConfig struct {
-	Instance    string   `yaml:"instance"`     // e.g., "lemmy.ml"
-	Username    string   `yaml:"username"`
-	Password    string   `yaml:"password"`
-	Communities []string `yaml:"communities"`  // Optional list of communities to scrape
+	Instance    string   `yaml:"instance" json:"instance"`        // e.g., "lemmy.ml"
+	Username    string   `yaml:"username" json:"username"`
+	Password    string   `yaml:"password" json:"password"`
+	Communities []string `yaml:"communities" json:"communities"`  // Optional list of communities to scrape
 }
 
 // StorageConfig contains settings for media storage
 type StorageConfig struct {
-	BaseDirectory string `yaml:"base_directory"`  // Where to save downloaded media
+	BaseDirectory string `yaml:"base_directory" json:"base_directory"`  // Where to save downloaded media
 }
 
 // DatabaseConfig contains SQLite database settings
 type DatabaseConfig struct {
-	Path string `yaml:"path"`  // Path to SQLite database file
+	Path string `yaml:"path" json:"path"`  // Path to SQLite database file
 }
 
 // ScraperConfig contains scraping behavior settings
 type ScraperConfig struct {
-	MaxPostsPerRun         int  `yaml:"max_posts_per_run"`           // Maximum posts to scrape per run (total across all pages)
-	StopAtSeenPosts        bool `yaml:"stop_at_seen_posts"`          // Stop when encountering previously seen posts
-	SkipSeenPosts          bool `yaml:"skip_seen_posts"`             // Skip seen posts but continue scraping (vs stopping)
-	EnablePagination       bool `yaml:"enable_pagination"`           // Fetch multiple pages to get more than 50 posts
-	SeenPostsThreshold     int  `yaml:"seen_posts_threshold"`        // Stop after encountering this many seen posts in a row
-	SortType               string `yaml:"sort_type"`                 // e.g., "Hot", "New", "TopDay"
-	IncludeImages          bool `yaml:"include_images"`              // Download images
-	IncludeVideos          bool `yaml:"include_videos"`              // Download videos
-	IncludeOtherMedia      bool `yaml:"include_other_media"`         // Download other media types
+	MaxPostsPerRun         int    `yaml:"max_posts_per_run" json:"max_posts_per_run"`           // Maximum posts to scrape per run (total across all pages)
+	StopAtSeenPosts        bool   `yaml:"stop_at_seen_posts" json:"stop_at_seen_posts"`         // Stop when encountering previously seen posts
+	SkipSeenPosts          bool   `yaml:"skip_seen_posts" json:"skip_seen_posts"`               // Skip seen posts but continue scraping (vs stopping)
+	EnablePagination       bool   `yaml:"enable_pagination" json:"enable_pagination"`           // Fetch multiple pages to get more than 50 posts
+	SeenPostsThreshold     int    `yaml:"seen_posts_threshold" json:"seen_posts_threshold"`     // Stop after encountering this many seen posts in a row
+	SortType               string `yaml:"sort_type" json:"sort_type"`                           // e.g., "Hot", "New", "TopDay"
+	IncludeImages          bool   `yaml:"include_images" json:"include_images"`                 // Download images
+	IncludeVideos          bool   `yaml:"include_videos" json:"include_videos"`                 // Download videos
+	IncludeOtherMedia      bool   `yaml:"include_other_media" json:"include_other_media"`       // Download other media types
 }
 
 // RunModeConfig contains run mode settings
 type RunModeConfig struct {
-	Mode     string        `yaml:"mode"`      // "once" or "continuous"
-	Interval time.Duration `yaml:"interval"`  // Interval for continuous mode (e.g., "5m", "1h")
+	Mode     string        `yaml:"mode" json:"mode"`          // "once" or "continuous"
+	Interval time.Duration `yaml:"interval" json:"interval"`  // Interval for continuous mode (e.g., "5m", "1h")
 }
 
 // WebServerConfig contains web UI server settings
 type WebServerConfig struct {
-	Enabled bool   `yaml:"enabled"`  // Enable web UI server
-	Host    string `yaml:"host"`     // Host to bind to (e.g., "localhost", "0.0.0.0")
-	Port    int    `yaml:"port"`     // Port to listen on
+	Enabled bool   `yaml:"enabled" json:"enabled"`  // Enable web UI server
+	Host    string `yaml:"host" json:"host"`        // Host to bind to (e.g., "localhost", "0.0.0.0")
+	Port    int    `yaml:"port" json:"port"`        // Port to listen on
 }
 
 // LoadConfig loads configuration from a YAML file
@@ -80,6 +80,25 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+// SaveConfig saves the configuration to a YAML file
+func SaveConfig(path string, config *Config) error {
+	// Validate before saving
+	if err := config.Validate(); err != nil {
+		return fmt.Errorf("config validation failed: %w", err)
+	}
+
+	data, err := yaml.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
 }
 
 // Validate checks if the configuration is valid
@@ -139,13 +158,15 @@ func (c *Config) SetDefaults() {
 		c.RunMode.Mode = "once"
 	}
 
-	// Web server defaults
+	// Web server defaults - enabled by default
 	if c.WebServer.Port == 0 {
 		c.WebServer.Port = 8080
 	}
 	if c.WebServer.Host == "" {
 		c.WebServer.Host = "localhost"
 	}
+	// Enable web server by default (can be disabled via CLI flag)
+	c.WebServer.Enabled = true
 }
 
 // normalizeSortType converts user-friendly sort type names to API format

@@ -21,6 +21,7 @@ var (
 	configPath = flag.String("config", "config.yaml", "Path to configuration file")
 	verbose    = flag.Bool("verbose", false, "Enable verbose logging")
 	stats      = flag.Bool("stats", false, "Display statistics and exit")
+	noWeb      = flag.Bool("no-web", false, "Disable web server (overrides config)")
 )
 
 func main() {
@@ -44,6 +45,11 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 	cfg.SetDefaults()
+
+	// CLI flag overrides config for web server
+	if *noWeb {
+		cfg.WebServer.Enabled = false
+	}
 
 	log.Infof("Loaded configuration from %s", *configPath)
 	log.Infof("Instance: %s", cfg.Lemmy.Instance)
@@ -87,7 +93,7 @@ func main() {
 
 	// Start web server if enabled
 	if cfg.WebServer.Enabled {
-		webServer := web.New(cfg, db)
+		webServer := web.New(cfg, *configPath, db)
 		go func() {
 			log.Infof("Web UI enabled at http://%s:%d", cfg.WebServer.Host, cfg.WebServer.Port)
 			if err := webServer.Start(); err != nil {
