@@ -3,7 +3,7 @@ version: '3.8'
 services:
   lemmy-scraper:
     # Pull from GitHub Container Registry
-    image: ghcr.io/st2projects/lemmy-media-scraper:latest
+    image: ghcr.io/st2projects/lemmy-media-scraper:0.0.7-next-amd64
 
     # For local development, use build instead:
     # build:
@@ -16,9 +16,9 @@ services:
     # Mount volumes for config and downloads
     volumes:
       # Config directory - place your config.yaml here
-      - ./config:/config:ro
+      - ./:/config:ro
       # Downloads directory - media will be saved here
-      - ./downloads:/downloads:rw
+      - ./:/downloads:rw
 
     # Expose web UI port (if web_server.enabled: true in config)
     ports:
