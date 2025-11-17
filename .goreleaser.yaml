@@ -15,7 +15,7 @@ builds:
     binary: lemmy-scraper
 
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
 
     # Build flags
     flags:
