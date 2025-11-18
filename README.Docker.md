@@ -39,6 +39,16 @@ docker-compose logs -f
 
 Open your browser to `http://localhost:8080`
 
+6. **(Optional) Enable AI-powered image recognition:**
+
+```bash
+# Pull the vision model in the Ollama container
+docker exec -it lemmy-scraper-ollama ollama pull llama3.2-vision:latest
+
+# Enable recognition in config/config.yaml
+# Set recognition.enabled: true
+```
+
 ## Building the Docker Image
 
 ### Using Docker Compose (Recommended)
@@ -63,9 +73,123 @@ docker run -d \
   lemmy-scraper:latest
 ```
 
+## AI-Powered Features with Ollama
+
+The Docker Compose setup includes an Ollama service for AI-powered image recognition and auto-tagging.
+
+### What is Ollama?
+
+Ollama is a local AI platform that runs vision models on your machine. The scraper uses it to:
+- **Automatically classify images** (e.g., "landscape", "nature", "architecture")
+- **Generate tags** based on image content
+- **Detect NSFW content** (experimental)
+
+### Enabling AI Features
+
+1. **Start the services:**
+
+```bash
+docker-compose up -d
+```
+
+The Ollama container will start automatically.
+
+2. **Pull the vision model:**
+
+```bash
+# Pull the recommended vision model (requires ~5GB disk space)
+docker exec -it lemmy-scraper-ollama ollama pull llama3.2-vision:latest
+
+# Or use a smaller model
+docker exec -it lemmy-scraper-ollama ollama pull llava:latest
+```
+
+3. **Enable recognition in config:**
+
+Edit `config/config.yaml`:
+
+```yaml
+recognition:
+  enabled: true                      # Enable the feature
+  provider: "ollama"
+  ollama_url: "http://ollama:11434"  # Docker service name
+  model: "llama3.2-vision:latest"
+  auto_tag: true                      # Automatically tag new downloads
+  nsfw_detection: false
+  confidence_threshold: 0.6
+```
+
+4. **Restart the scraper:**
+
+```bash
+docker-compose restart lemmy-scraper
+```
+
+### Managing Ollama Models
+
+**List installed models:**
+```bash
+docker exec -it lemmy-scraper-ollama ollama list
+```
+
+**Remove a model:**
+```bash
+docker exec -it lemmy-scraper-ollama ollama rm llama3.2-vision:latest
+```
+
+**Check Ollama status:**
+```bash
+curl http://localhost:11434/api/tags
+```
+
+### GPU Support for Ollama
+
+For faster processing with NVIDIA GPUs:
+
+1. **Install NVIDIA Container Toolkit**
+
+2. **Uncomment GPU settings in docker-compose.yml:**
+
+```yaml
+ollama:
+  runtime: nvidia
+  environment:
+    - NVIDIA_VISIBLE_DEVICES=all
+```
+
+3. **Restart:**
+
+```bash
+docker-compose down
+docker-compose up -d
+```
+
+### Resource Requirements
+
+Ollama resource needs (adjust in docker-compose.yml):
+- **Without GPU:** 4-8GB RAM, 2-4 CPU cores
+- **With GPU:** 2GB+ VRAM, 4GB+ RAM
+
+The vision model requires approximately 5GB disk space for the model files.
+
+### Disabling Ollama
+
+If you don't need AI features:
+
+1. **Set in config.yaml:**
+```yaml
+recognition:
+  enabled: false
+```
+
+2. **Or remove the Ollama service:**
+```bash
+docker-compose up -d lemmy-scraper
+```
+
 ## Volume Mounts
 
-The Docker setup uses two volumes:
+The Docker setup uses three volumes:
 
 ### 1. Config Volume (`/config`)
 
@@ -84,6 +208,18 @@ This volume is mounted as read-only for security.
   - `{community_name}/` - Community directories with downloaded media
 
 This volume is mounted as read-write to allow the scraper to save files.
+
+### 3. Thumbnails Volume (`/thumbnails`)
+
+- **Purpose:** Stores generated thumbnails for web UI
+- **Mount:** `./thumbnails:/thumbnails:rw` (read-write)
+- **Contents:** Thumbnail images for faster web browsing
+
+### 4. Ollama Models Volume (named volume)
+
+- **Purpose:** Stores Ollama AI models
+- **Mount:** `ollama-models:/root/.ollama`
+- **Persistence:** Docker-managed named volume
 
 ## Configuration for Docker
 

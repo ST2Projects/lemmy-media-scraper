@@ -8,10 +8,21 @@ A Go-based Lemmy media scraper that downloads images, videos, and other media fr
 
 ## Build and Run Commands
 
-**Build the scraper:**
+**Build with FTS5 search support (recommended):**
 ```bash
+make build-fts5
+# Or manually:
+CGO_ENABLED=1 go build -tags fts5 -o lemmy-scraper ./cmd/scraper
+```
+
+**Build without FTS5 (search will be disabled):**
+```bash
+make build
+# Or manually:
 go build -o lemmy-scraper ./cmd/scraper
 ```
+
+**Note about FTS5:** Full-text search requires SQLite to be built with FTS5 support. The `fts5` build tag ensures the go-sqlite3 driver is compiled with this feature. Without it, the application will still work but search functionality will be disabled.
 
 **Run with default config:**
 ```bash

@@ -78,8 +78,12 @@ func (c *OllamaClassifier) Classify(imagePath string) (*Classification, error) {
 
 // ClassifyFromBytes analyzes image data in memory
 func (c *OllamaClassifier) ClassifyFromBytes(imageData []byte) (*Classification, error) {
+	startTime := time.Now()
+	log.Infof("Starting image classification using Ollama model %s at %s", c.Model, c.BaseURL)
+
 	// Encode image to base64
 	encoded := base64.StdEncoding.EncodeToString(imageData)
+	log.Debugf("Encoded image size: %d bytes (base64: %d chars)", len(imageData), len(encoded))
 
 	// Build prompt for classification
 	prompt := `Analyze this image and provide:
@@ -110,6 +114,7 @@ Respond in JSON format:
 	}
 
 	// Make API request
+	log.Infof("Sending classification request to Ollama API...")
 	client := &http.Client{Timeout: c.Timeout}
 	resp, err := client.Post(
 		c.BaseURL+"/api/generate",
@@ -117,42 +122,58 @@ Respond in JSON format:
 		bytes.NewBuffer(jsonData),
 	)
 	if err != nil {
+		log.Errorf("Ollama API request failed: %v", err)
 		return nil, fmt.Errorf("failed to call Ollama API: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		log.Errorf("Ollama API returned error status %d: %s", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("Ollama API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse response
 	var ollamaResp ollamaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		log.Errorf("Failed to decode Ollama response: %v", err)
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
+
+	duration := time.Since(startTime)
+	log.Infof("Ollama API request completed in %v", duration)
+	log.Debugf("Raw Ollama response: %s", ollamaResp.Response)
 
 	// Parse the JSON response from the model
 	classification, err := c.parseResponse(ollamaResp.Response)
 	if err != nil {
-		log.Debugf("Failed to parse structured response, using fallback: %v", err)
+		log.Warnf("Failed to parse structured JSON response from model: %v", err)
+		log.Info("Using fallback text parsing method")
 		// Fallback to basic extraction
 		classification = c.fallbackParse(ollamaResp.Response)
+		log.Infof("Fallback parsing extracted %d labels and %d categories", len(classification.Labels), len(classification.Categories))
+	} else {
+		log.Infof("Successfully parsed JSON response: %d labels, %d categories", len(classification.Labels), len(classification.Categories))
 	}
 
 	// Optional NSFW detection
 	if c.EnableNSFW {
+		log.Info("Running NSFW content detection...")
 		nsfwScore, err := c.detectNSFW(imageData)
 		if err != nil {
-			log.Debugf("NSFW detection failed: %v", err)
+			log.Warnf("NSFW detection failed: %v", err)
 		} else {
 			classification.NSFWScore = nsfwScore
+			log.Infof("NSFW score: %.2f", nsfwScore)
 		}
 	}
 
 	classification.Confidence = 0.8 // Default confidence
 
-	log.Debugf("Image classification: %+v", classification)
+	log.Infof("Classification complete: %d total tags (Labels: %v, Categories: %v)",
+		len(classification.Labels)+len(classification.Categories),
+		classification.Labels,
+		classification.Categories)
 
 	return classification, nil
 }

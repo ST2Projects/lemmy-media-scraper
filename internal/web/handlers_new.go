@@ -328,11 +328,78 @@ func (s *Server) handleServeThumbnail(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, thumbnailPath)
 }
 
+// handleTagBackfill triggers auto-tagging for all untagged media
+func (s *Server) handleTagBackfill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.TagManager == nil || s.TagManager.Classifier == nil {
+		http.Error(w, "Auto-tagging is not enabled (check recognition settings)", http.StatusServiceUnavailable)
+		return
+	}
+
+	log.Info("Auto-tag backfill requested via API")
+
+	// Run backfill in a goroutine to avoid timeout
+	go func() {
+		successCount, errorCount, err := s.TagManager.BackfillUntaggedMedia()
+		if err != nil {
+			log.Errorf("Backfill failed: %v", err)
+		} else {
+			log.Infof("Backfill completed: %d succeeded, %d failed", successCount, errorCount)
+		}
+	}()
+
+	respondJSON(w, map[string]interface{}{
+		"message": "Auto-tag backfill started in background. Check logs for progress.",
+		"status":  "started",
+	})
+}
+
 // respondJSON is a helper function to send JSON responses
 func respondJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Errorf("Failed to encode JSON response: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// handleStatsPage serves the statistics dashboard page
+func (s *Server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
+	// Get basic stats
+	stats, _ := s.DB.GetStats()
+	timeline, _ := s.DB.GetTimelineStats("day")
+	topCreators, _ := s.DB.GetTopCreators(10)
+	storage, _ := s.DB.GetStorageBreakdown()
+
+	data := map[string]interface{}{
+		"Stats":       stats,
+		"Timeline":    timeline,
+		"TopCreators": topCreators,
+		"Storage":     storage,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "stats", data); err != nil {
+		log.Errorf("Template error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// handleTagsPage serves the tag management page
+func (s *Server) handleTagsPage(w http.ResponseWriter, r *http.Request) {
+	tags, _ := s.TagManager.GetAllTags()
+
+	data := map[string]interface{}{
+		"Tags": tags,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "tags", data); err != nil {
+		log.Errorf("Template error: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }

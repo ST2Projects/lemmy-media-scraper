@@ -15,6 +15,7 @@ import (
 // DB represents the database connection
 type DB struct {
 	*sqlx.DB
+	ftsAvailable bool
 }
 
 // New creates a new database connection and initializes the schema
@@ -28,7 +29,7 @@ func New(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	database := &DB{db}
+	database := &DB{DB: db, ftsAvailable: false}
 	if err := database.initSchema(); err != nil {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
@@ -173,6 +174,10 @@ func (db *DB) initSchema() error {
 		// Log warning but don't fail initialization
 		log.Warnf("FTS5 search index not available: %v", err)
 		log.Warn("Full-text search will be disabled. To enable, rebuild SQLite with FTS5 support.")
+		db.ftsAvailable = false
+	} else {
+		db.ftsAvailable = true
+		log.Debug("FTS5 search index initialized successfully")
 	}
 
 	return nil
@@ -591,7 +596,7 @@ func (db *DB) Close() error {
 
 // initSearchIndex creates the FTS5 search index and triggers
 func (db *DB) initSearchIndex() error {
-	// Create FTS5 virtual table
+	// Try to create FTS5 virtual table
 	ftsSchema := `
 		CREATE VIRTUAL TABLE IF NOT EXISTS media_search_fts USING fts5(
 			media_id UNINDEXED,
@@ -605,7 +610,11 @@ func (db *DB) initSearchIndex() error {
 	`
 
 	if _, err := db.Exec(ftsSchema); err != nil {
-		return fmt.Errorf("failed to create FTS table: %w", err)
+		// FTS5 not available - this is not fatal, just disable search
+		log.Warnf("FTS5 search index not available: %v", err)
+		log.Warn("To enable search, rebuild with: go build -tags fts5 -o lemmy-scraper ./cmd/scraper")
+		db.ftsAvailable = false
+		return nil
 	}
 
 	// Create triggers to keep FTS in sync
@@ -630,30 +639,37 @@ func (db *DB) initSearchIndex() error {
 	`
 
 	if _, err := db.Exec(triggers); err != nil {
-		return fmt.Errorf("failed to create FTS triggers: %w", err)
+		log.Warnf("Failed to create FTS triggers: %v", err)
+		db.ftsAvailable = false
+		return nil
 	}
 
 	// Check if we need to populate the FTS index
-	var ftsCount int
-	if err := db.Get(&ftsCount, "SELECT COUNT(*) FROM media_search_fts"); err != nil {
-		return fmt.Errorf("failed to check FTS count: %w", err)
-	}
-
+	// For FTS5 content tables, we check the source table and populate if needed
 	var mediaCount int
 	if err := db.Get(&mediaCount, "SELECT COUNT(*) FROM scraped_media"); err != nil {
 		return fmt.Errorf("failed to check media count: %w", err)
 	}
 
-	// Rebuild index if empty or out of sync
-	if ftsCount == 0 && mediaCount > 0 {
+	// If there's existing media data, try to populate the FTS index
+	// Using INSERT OR IGNORE to skip rows that already exist
+	if mediaCount > 0 {
+		log.Infof("Ensuring FTS5 search index is populated with %d media items...", mediaCount)
 		rebuildQuery := `
-			INSERT INTO media_search_fts(rowid, media_id, post_title, community_name, creator_name, post_url)
+			INSERT OR IGNORE INTO media_search_fts(rowid, media_id, post_title, community_name, creator_name, post_url)
 			SELECT id, id, post_title, community_name, author_name, post_url FROM scraped_media;
 		`
 		if _, err := db.Exec(rebuildQuery); err != nil {
-			return fmt.Errorf("failed to rebuild FTS index: %w", err)
+			log.Warnf("Failed to populate FTS index: %v", err)
+			db.ftsAvailable = false
+			return nil
 		}
+		log.Info("FTS5 search index ready")
 	}
+
+	// FTS5 is available and working
+	db.ftsAvailable = true
+	log.Info("FTS5 full-text search enabled")
 
 	return nil
 }
@@ -662,6 +678,11 @@ func (db *DB) initSearchIndex() error {
 func (db *DB) SearchMedia(query string, limit int, offset int) ([]models.ScrapedMedia, int, error) {
 	if query == "" {
 		return []models.ScrapedMedia{}, 0, nil
+	}
+
+	// Check if FTS5 is available
+	if !db.ftsAvailable {
+		return nil, 0, fmt.Errorf("FTS5 search not available - SQLite build does not support FTS5")
 	}
 
 	// Count total results
@@ -675,11 +696,12 @@ func (db *DB) SearchMedia(query string, limit int, offset int) ([]models.Scraped
 	}
 
 	// Get search results
+	// For FTS5 content tables, use rowid for joins
 	searchQuery := `
 		SELECT m.* FROM scraped_media m
-		INNER JOIN media_search_fts fts ON m.id = fts.media_id
+		INNER JOIN media_search_fts fts ON m.id = fts.rowid
 		WHERE media_search_fts MATCH ?
-		ORDER BY rank
+		ORDER BY fts.rank
 		LIMIT ? OFFSET ?
 	`
 
@@ -809,6 +831,35 @@ func (db *DB) GetTagsForMedia(mediaID int64) ([]map[string]interface{}, error) {
 	}
 
 	return tags, nil
+}
+
+// GetUntaggedImages returns all image media IDs that have no tags
+func (db *DB) GetUntaggedImages() ([]map[string]interface{}, error) {
+	query := `
+		SELECT m.id, m.file_path, m.post_title, m.community_name
+		FROM scraped_media m
+		LEFT JOIN media_tag_assignments a ON m.id = a.media_id
+		WHERE a.media_id IS NULL
+		AND (m.media_type = 'image' OR m.media_type LIKE 'image/%')
+		ORDER BY m.downloaded_at DESC
+	`
+
+	rows, err := db.Queryx(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query untagged images: %w", err)
+	}
+	defer rows.Close()
+
+	var media []map[string]interface{}
+	for rows.Next() {
+		item := make(map[string]interface{})
+		if err := rows.MapScan(item); err != nil {
+			return nil, fmt.Errorf("failed to scan media: %w", err)
+		}
+		media = append(media, item)
+	}
+
+	return media, nil
 }
 
 // Thumbnail-related methods

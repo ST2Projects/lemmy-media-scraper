@@ -96,12 +96,16 @@ func (s *Server) setupRoutes() {
 		"formatDate":     formatDate,
 		"add": func(a, b int) int { return a + b },
 		"sub": func(a, b int) int { return a - b },
-	}).Parse(indexTemplate + mediaGridTemplate + mediaModalTemplate + settingsTemplate))
+	}).Parse(indexTemplate + mediaGridTemplate + mediaModalTemplate + settingsTemplate + statsTemplate + tagsTemplate))
 
 	mux := http.NewServeMux()
 
 	// Main page
 	mux.HandleFunc("/", s.handleIndex)
+
+	// Stats and Tags pages
+	mux.HandleFunc("/stats", s.handleStatsPage)
+	mux.HandleFunc("/tags", s.handleTagsPage)
 
 	// Settings page
 	mux.HandleFunc("/settings", s.handleSettings)
@@ -132,6 +136,7 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("/api/tags", s.handleTags)
 	mux.HandleFunc("/api/tags/", s.handleTagByID)
 	mux.HandleFunc("/api/media-tags/", s.handleMediaTags)
+	mux.HandleFunc("/api/tags/backfill", s.handleTagBackfill)
 
 	// Advanced statistics endpoints
 	mux.HandleFunc("/api/stats/timeline", s.handleStatsTimeline)
@@ -208,6 +213,7 @@ func (s *Server) handleMediaGrid(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse filters
+	searchQuery := query.Get("search")
 	community := query.Get("community")
 	mediaType := query.Get("type")
 	sortBy := query.Get("sort")
@@ -219,7 +225,42 @@ func (s *Server) handleMediaGrid(w http.ResponseWriter, r *http.Request) {
 		sortOrder = "DESC"
 	}
 
-	media, total := s.getMediaList(community, mediaType, sortBy, sortOrder, limit, offset)
+	var media []map[string]interface{}
+	var total int
+
+	// Use search if query provided
+	if searchQuery != "" {
+		searchResults, searchTotal, err := s.DB.SearchMedia(searchQuery, limit, offset)
+		if err != nil {
+			log.Errorf("Search error: %v", err)
+			media, total = s.getMediaList(community, mediaType, sortBy, sortOrder, limit, offset)
+		} else {
+			// Convert search results to map format
+			media = make([]map[string]interface{}, len(searchResults))
+			for i, m := range searchResults {
+				media[i] = map[string]interface{}{
+					"id":             m.ID,
+					"post_id":        m.PostID,
+					"post_title":     m.PostTitle,
+					"community_name": m.CommunityName,
+					"author_name":    m.AuthorName,
+					"media_url":      m.MediaURL,
+					"file_name":      m.FileName,
+					"file_path":      m.FilePath,
+					"file_size":      m.FileSize,
+					"media_type":     m.MediaType,
+					"post_url":       m.PostURL,
+					"post_score":     m.PostScore,
+					"post_created":   m.PostCreated,
+					"downloaded_at":  m.DownloadedAt,
+					"serve_url":      "/media/" + m.CommunityName + "/" + m.FileName,
+				}
+			}
+			total = searchTotal
+		}
+	} else {
+		media, total = s.getMediaList(community, mediaType, sortBy, sortOrder, limit, offset)
+	}
 
 	data := map[string]interface{}{
 		"Media":      media,
@@ -711,8 +752,9 @@ const indexTemplate = `{{define "index"}}
             display: flex;
             gap: 12px;
             flex-wrap: wrap;
+            align-items: center;
         }
-        select {
+        select, input[type="text"], input[type="search"] {
             background: #2a2a2a;
             color: #e0e0e0;
             border: 1px solid #3a3a3a;
@@ -721,7 +763,103 @@ const indexTemplate = `{{define "index"}}
             font-size: 14px;
             cursor: pointer;
         }
-        select:hover { background: #333; }
+        select:hover, input:hover { background: #333; }
+        input:focus { outline: none; border-color: #4a9eff; }
+        .search-box {
+            display: flex;
+            gap: 8px;
+            flex: 1;
+            max-width: 400px;
+        }
+        .search-box input {
+            flex: 1;
+            min-width: 200px;
+        }
+        .btn {
+            background: #4a9eff;
+            color: #fff;
+            border: none;
+            padding: 6px 16px;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #3a8eef; }
+        .btn-secondary {
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+        }
+        .btn-secondary:hover { background: #333; }
+        .progress-bar {
+            background: #2a2a2a;
+            padding: 12px 16px;
+            border-bottom: 1px solid #3a3a3a;
+            display: none;
+        }
+        .progress-bar.active { display: block; }
+        .progress-bar-content {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .progress-bar-fill {
+            height: 4px;
+            background: #4a9eff;
+            border-radius: 2px;
+            transition: width 0.3s;
+        }
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #999;
+            margin-top: 4px;
+        }
+        .tag {
+            display: inline-block;
+            background: #2a2a2a;
+            color: #e0e0e0;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            margin: 2px;
+        }
+        .tag.auto { opacity: 0.7; }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 1000;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .modal.active { display: flex; }
+        .modal-content {
+            margin: auto;
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 24px;
+            max-width: 600px;
+            width: 100%;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            color: #999;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        .modal-close:hover { color: #e0e0e0; }
         .content {
             max-width: 1400px;
             margin: 0 auto;
@@ -974,13 +1112,39 @@ const indexTemplate = `{{define "index"}}
                         {{end}}
                     {{end}}
                 </div>
+                <a href="/stats">📊 Stats</a>
+                <a href="/tags">🏷️ Tags</a>
                 <a href="/settings">⚙️ Settings</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Real-time Progress Bar -->
+    <div id="progress-bar" class="progress-bar">
+        <div class="progress-bar-content">
+            <div class="progress-bar-fill" id="progress-fill" style="width: 0%"></div>
+            <div class="progress-info">
+                <span id="progress-text">Idle</span>
+                <span id="progress-eta"></span>
             </div>
         </div>
     </div>
 
     <div class="filters">
         <div class="filters-content">
+            <!-- Search Box -->
+            <div class="search-box">
+                <input type="search"
+                       id="search"
+                       name="search"
+                       placeholder="Search media..."
+                       hx-get="/media-grid"
+                       hx-trigger="keyup changed delay:500ms, search"
+                       hx-target="#media-container"
+                       hx-include="[name='community'],[name='type'],[name='sort'],[name='order']">
+                <button class="btn btn-secondary" onclick="document.getElementById('search').value=''; document.body.dispatchEvent(new CustomEvent('filterChange'));">Clear</button>
+            </div>
+
             <select id="community" name="community">
                 <option value="">All Communities</option>
                 {{range .Communities}}
@@ -1184,6 +1348,83 @@ const indexTemplate = `{{define "index"}}
             console.warn('Blocked unknown URL scheme:', url);
             return '#';
         }
+
+        // WebSocket for real-time progress updates
+        (function() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = protocol + '//' + window.location.host + '/ws/progress';
+            let ws = null;
+            let reconnectTimeout = null;
+
+            function connect() {
+                try {
+                    ws = new WebSocket(wsUrl);
+
+                    ws.onopen = function() {
+                        console.log('Progress WebSocket connected');
+                    };
+
+                    ws.onmessage = function(event) {
+                        try {
+                            const status = JSON.parse(event.data);
+                            updateProgress(status);
+                        } catch (e) {
+                            console.error('Failed to parse progress update:', e);
+                        }
+                    };
+
+                    ws.onerror = function(error) {
+                        console.error('WebSocket error:', error);
+                    };
+
+                    ws.onclose = function() {
+                        console.log('Progress WebSocket disconnected');
+                        // Reconnect after 5 seconds
+                        reconnectTimeout = setTimeout(connect, 5000);
+                    };
+                } catch (e) {
+                    console.error('WebSocket connection failed:', e);
+                    reconnectTimeout = setTimeout(connect, 5000);
+                }
+            }
+
+            function updateProgress(status) {
+                const progressBar = document.getElementById('progress-bar');
+                const progressFill = document.getElementById('progress-fill');
+                const progressText = document.getElementById('progress-text');
+                const progressEta = document.getElementById('progress-eta');
+
+                if (status.is_running) {
+                    progressBar.classList.add('active');
+                    progressFill.style.width = status.progress + '%';
+
+                    let text = status.current_operation || 'Processing...';
+                    text += ' (' + status.posts_processed + ' posts, ' + status.media_downloaded + ' media';
+                    if (status.errors_count > 0) {
+                        text += ', ' + status.errors_count + ' errors';
+                    }
+                    text += ')';
+                    progressText.textContent = text;
+
+                    if (status.eta) {
+                        progressEta.textContent = 'ETA: ' + status.eta;
+                    } else {
+                        progressEta.textContent = '';
+                    }
+                } else {
+                    progressBar.classList.remove('active');
+                }
+            }
+
+            // Start connection
+            connect();
+
+            // Cleanup on page unload
+            window.addEventListener('beforeunload', function() {
+                if (ws) ws.close();
+                if (reconnectTimeout) clearTimeout(reconnectTimeout);
+            });
+        })();
     </script>
 </body>
 </html>
@@ -1550,6 +1791,96 @@ const settingsTemplate = `{{define "settings"}}
                 </div>
             </div>
 
+            <div class="section">
+                <div class="section-title">Thumbnails</div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="thumbnails_enabled" name="thumbnails_enabled">
+                        <label for="thumbnails_enabled">Enable thumbnail generation</label>
+                    </div>
+                    <div class="help-text">Generate thumbnails for faster web UI loading</div>
+                </div>
+                <div class="form-group">
+                    <label for="thumbnails_max_width">Max Width</label>
+                    <input type="number" id="thumbnails_max_width" name="thumbnails_max_width" min="50" max="2000" placeholder="400">
+                    <div class="help-text">Maximum thumbnail width (maintains aspect ratio)</div>
+                </div>
+                <div class="form-group">
+                    <label for="thumbnails_max_height">Max Height</label>
+                    <input type="number" id="thumbnails_max_height" name="thumbnails_max_height" min="50" max="2000" placeholder="400">
+                    <div class="help-text">Maximum thumbnail height (maintains aspect ratio)</div>
+                </div>
+                <div class="form-group">
+                    <label for="thumbnails_quality">JPEG Quality</label>
+                    <input type="number" id="thumbnails_quality" name="thumbnails_quality" min="1" max="100" placeholder="85">
+                    <div class="help-text">JPEG quality (1-100, higher is better)</div>
+                </div>
+                <div class="form-group">
+                    <label for="thumbnails_directory">Directory</label>
+                    <input type="text" id="thumbnails_directory" name="thumbnails_directory" placeholder="./thumbnails">
+                    <div class="help-text">Where to store generated thumbnails</div>
+                </div>
+                <div class="form-group">
+                    <label for="thumbnails_video_method">Video Thumbnail Method</label>
+                    <input type="text" id="thumbnails_video_method" name="thumbnails_video_method" placeholder="ffmpeg">
+                    <div class="help-text">Method for video thumbnails (requires ffmpeg)</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">Image Recognition & Auto-Tagging</div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="recognition_enabled" name="recognition_enabled">
+                        <label for="recognition_enabled">Enable AI-powered image recognition</label>
+                    </div>
+                    <div class="help-text">Requires Ollama with a vision model (e.g., llama3.2-vision)</div>
+                </div>
+                <div class="form-group">
+                    <label for="recognition_provider">Provider</label>
+                    <input type="text" id="recognition_provider" name="recognition_provider" placeholder="ollama">
+                    <div class="help-text">Recognition provider (currently only "ollama" supported)</div>
+                </div>
+                <div class="form-group">
+                    <label for="recognition_ollama_url">Ollama URL</label>
+                    <input type="text" id="recognition_ollama_url" name="recognition_ollama_url" placeholder="http://localhost:11434">
+                    <div class="help-text">URL of your Ollama API instance</div>
+                </div>
+                <div class="form-group">
+                    <label for="recognition_model">Model</label>
+                    <input type="text" id="recognition_model" name="recognition_model" placeholder="llama3.2-vision:latest">
+                    <div class="help-text">Ollama model to use (install with: ollama pull llama3.2-vision:latest)</div>
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="recognition_auto_tag" name="recognition_auto_tag">
+                        <label for="recognition_auto_tag">Automatically create tags from AI classifications</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="recognition_nsfw_detection" name="recognition_nsfw_detection">
+                        <label for="recognition_nsfw_detection">Enable NSFW content detection (experimental)</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="recognition_confidence_threshold">Confidence Threshold</label>
+                    <input type="number" id="recognition_confidence_threshold" name="recognition_confidence_threshold" min="0" max="1" step="0.1" placeholder="0.6">
+                    <div class="help-text">Minimum confidence (0.0-1.0) for auto-tagging</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">Search</div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="search_rebuild_index" name="search_rebuild_index">
+                        <label for="search_rebuild_index">Rebuild search index on startup</label>
+                    </div>
+                    <div class="help-text">Only enable if search results seem incorrect (may slow startup)</div>
+                </div>
+            </div>
+
             <div class="alert alert-warning">
                 <strong>Note:</strong> Changes will be saved to the config file. Some settings may require restarting the application to take effect.
             </div>
@@ -1619,6 +1950,29 @@ const settingsTemplate = `{{define "settings"}}
 
             document.getElementById('web_host').value = config.web_server.host || 'localhost';
             document.getElementById('web_port').value = config.web_server.port || 8080;
+
+            // Thumbnails
+            const thumbnails = config.thumbnails || {};
+            document.getElementById('thumbnails_enabled').checked = thumbnails.enabled || false;
+            document.getElementById('thumbnails_max_width').value = thumbnails.max_width || 400;
+            document.getElementById('thumbnails_max_height').value = thumbnails.max_height || 400;
+            document.getElementById('thumbnails_quality').value = thumbnails.quality || 85;
+            document.getElementById('thumbnails_directory').value = thumbnails.directory || './thumbnails';
+            document.getElementById('thumbnails_video_method').value = thumbnails.video_method || 'ffmpeg';
+
+            // Recognition
+            const recognition = config.recognition || {};
+            document.getElementById('recognition_enabled').checked = recognition.enabled || false;
+            document.getElementById('recognition_provider').value = recognition.provider || 'ollama';
+            document.getElementById('recognition_ollama_url').value = recognition.ollama_url || 'http://localhost:11434';
+            document.getElementById('recognition_model').value = recognition.model || 'llama3.2-vision:latest';
+            document.getElementById('recognition_auto_tag').checked = recognition.auto_tag || false;
+            document.getElementById('recognition_nsfw_detection').checked = recognition.nsfw_detection || false;
+            document.getElementById('recognition_confidence_threshold').value = recognition.confidence_threshold || 0.6;
+
+            // Search
+            const search = config.search || {};
+            document.getElementById('search_rebuild_index').checked = search.rebuild_index || false;
         }
 
         function formatDuration(ns) {
@@ -1675,6 +2029,26 @@ const settingsTemplate = `{{define "settings"}}
                         enabled: true,
                         host: formData.get('web_host'),
                         port: parseInt(formData.get('web_port'))
+                    },
+                    thumbnails: {
+                        enabled: formData.get('thumbnails_enabled') === 'on',
+                        max_width: parseInt(formData.get('thumbnails_max_width')) || 400,
+                        max_height: parseInt(formData.get('thumbnails_max_height')) || 400,
+                        quality: parseInt(formData.get('thumbnails_quality')) || 85,
+                        directory: formData.get('thumbnails_directory') || './thumbnails',
+                        video_method: formData.get('thumbnails_video_method') || 'ffmpeg'
+                    },
+                    recognition: {
+                        enabled: formData.get('recognition_enabled') === 'on',
+                        provider: formData.get('recognition_provider') || 'ollama',
+                        ollama_url: formData.get('recognition_ollama_url') || 'http://localhost:11434',
+                        model: formData.get('recognition_model') || 'llama3.2-vision:latest',
+                        auto_tag: formData.get('recognition_auto_tag') === 'on',
+                        nsfw_detection: formData.get('recognition_nsfw_detection') === 'on',
+                        confidence_threshold: parseFloat(formData.get('recognition_confidence_threshold')) || 0.6
+                    },
+                    search: {
+                        rebuild_index: formData.get('search_rebuild_index') === 'on'
                     }
                 };
 
@@ -1741,6 +2115,189 @@ const settingsTemplate = `{{define "settings"}}
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
+{{end}}`
+
+const statsTemplate = `{{define "stats"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Statistics - Lemmy Media</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f0f0f; color: #e0e0e0; }
+        .header { background: #1a1a1a; border-bottom: 1px solid #2a2a2a; padding: 16px; }
+        .header-content { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 24px; }
+        .header a { color: #4a9eff; text-decoration: none; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 32px; }
+        .stat-card { background: #1a1a1a; padding: 20px; border-radius: 8px; }
+        .stat-card h3 { color: #999; font-size: 14px; margin-bottom: 8px; }
+        .stat-card .value { font-size: 32px; font-weight: 600; color: #4a9eff; }
+        table { width: 100%; background: #1a1a1a; border-radius: 8px; overflow: hidden; margin-bottom: 24px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #2a2a2a; }
+        th { background: #252525; color: #999; font-weight: 500; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1>📊 Statistics</h1>
+            <a href="/">← Back to Media</a>
+        </div>
+    </div>
+    <div class="container">
+        <div class="stats-grid">
+            {{if .Stats.total_media}}
+            <div class="stat-card">
+                <h3>Total Media</h3>
+                <div class="value">{{.Stats.total_media}}</div>
+            </div>
+            {{end}}
+        </div>
+
+        {{if .TopCreators}}
+        <h2 style="margin-bottom: 16px;">Top Creators</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Creator</th>
+                    <th>Media Count</th>
+                    <th>Total Score</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .TopCreators}}
+                <tr>
+                    <td>{{index . "author_name"}}</td>
+                    <td>{{index . "media_count"}}</td>
+                    <td>{{index . "total_score"}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{end}}
+
+        {{if .Timeline}}
+        <h2 style="margin-bottom: 16px;">Recent Downloads (Last 30 Days)</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Period</th>
+                    <th>Count</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Timeline}}
+                <tr>
+                    <td>{{index . "period"}}</td>
+                    <td>{{index . "count"}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{end}}
+    </div>
+</body>
+</html>
+{{end}}`
+
+const tagsTemplate = `{{define "tags"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tags - Lemmy Media</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f0f0f; color: #e0e0e0; }
+        .header { background: #1a1a1a; border-bottom: 1px solid #2a2a2a; padding: 16px; }
+        .header-content { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 24px; }
+        .header a { color: #4a9eff; text-decoration: none; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        .tag-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+        .tag-card { background: #1a1a1a; padding: 16px; border-radius: 8px; border-left: 4px solid; }
+        .tag-card h3 { font-size: 16px; margin-bottom: 4px; }
+        .tag-card .meta { font-size: 12px; color: #999; }
+        .btn { display: inline-block; background: #4a9eff; color: #fff; padding: 8px 16px; border-radius: 4px; text-decoration: none; margin-bottom: 24px; border: none; cursor: pointer; }
+        .btn:hover { background: #3a8eef; }
+        .btn-secondary { background: #2a2a2a; border: 1px solid #3a3a3a; }
+        .btn-secondary:hover { background: #333; }
+        .button-group { display: flex; gap: 12px; margin-bottom: 24px; }
+        #backfill-status { margin-top: 12px; padding: 12px; background: #1a3a1a; border: 1px solid #2a5a2a; color: #6fd46f; border-radius: 4px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1>🏷️ Tags</h1>
+            <a href="/">← Back to Media</a>
+        </div>
+    </div>
+    <div class="container">
+        <div class="button-group">
+            <a href="#" class="btn" onclick="alert('Use API to create tags: POST /api/tags'); return false;">+ Create Tag</a>
+            <button class="btn btn-secondary" onclick="runBackfill()">🤖 Auto-Tag Untagged Media</button>
+        </div>
+        <div id="backfill-status"></div>
+        <div class="tag-grid">
+            {{range .Tags}}
+            <div class="tag-card" style="border-left-color: {{index . "color"}};">
+                <h3>{{index . "name"}}</h3>
+                <div class="meta">
+                    {{if index . "auto_generated"}}Auto-generated{{else}}User-created{{end}}
+                </div>
+            </div>
+            {{else}}
+            <p style="color: #999;">No tags yet. Tags can be created via the API or auto-generated from image recognition.</p>
+            {{end}}
+        </div>
+    </div>
+    <script>
+        function runBackfill() {
+            if (!confirm('This will auto-tag all media that currently has no tags using AI image recognition. This may take a while depending on the number of untagged images. Continue?')) {
+                return;
+            }
+
+            const statusDiv = document.getElementById('backfill-status');
+            statusDiv.style.display = 'block';
+            statusDiv.innerHTML = '⏳ Starting auto-tag backfill... Check server logs for detailed progress.';
+
+            fetch('/api/tags/backfill', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        throw new Error(text || 'Backfill request failed');
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                statusDiv.innerHTML = '✓ ' + (data.message || 'Auto-tag backfill started! Check server logs for progress.');
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                    location.reload(); // Reload to show newly created tags
+                }, 3000);
+            })
+            .catch(error => {
+                statusDiv.style.background = '#3a1a1a';
+                statusDiv.style.borderColor = '#5a2a2a';
+                statusDiv.style.color = '#f46f6f';
+                statusDiv.innerHTML = '✗ Error: ' + error.message;
+            });
         }
     </script>
 </body>

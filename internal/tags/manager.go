@@ -31,11 +31,12 @@ func (m *Manager) AutoTagMedia(mediaID int64, imagePath string) error {
 		return nil
 	}
 
-	log.Debugf("Auto-tagging media ID %d", mediaID)
+	log.Infof("Auto-tagging media ID %d: %s", mediaID, imagePath)
 
 	// Classify the image
 	classification, err := m.Classifier.Classify(imagePath)
 	if err != nil {
+		log.Errorf("Failed to classify image %s (media ID %d): %v", imagePath, mediaID, err)
 		return fmt.Errorf("failed to classify image: %w", err)
 	}
 
@@ -43,19 +44,29 @@ func (m *Manager) AutoTagMedia(mediaID int64, imagePath string) error {
 	allTags := append(classification.Labels, classification.Categories...)
 	allTags = uniqueStrings(allTags)
 
+	if len(allTags) == 0 {
+		log.Warnf("No tags generated for media ID %d (confidence threshold may be too high)", mediaID)
+		return nil
+	}
+
+	log.Infof("AI classification returned %d potential tags for media ID %d: %v", len(allTags), mediaID, allTags)
+
 	// Create and assign tags
+	assignedCount := 0
+	createdCount := 0
 	for _, tagName := range allTags {
 		if tagName == "" || len(tagName) < 2 {
 			continue
 		}
 
 		// Normalize tag name
+		originalName := tagName
 		tagName = normalizeTagName(tagName)
 
 		// Get or create tag
 		tag, err := m.DB.GetTagByName(tagName)
 		if err != nil {
-			log.Debugf("Error getting tag '%s': %v", tagName, err)
+			log.Warnf("Error getting tag '%s': %v", tagName, err)
 			continue
 		}
 
@@ -64,22 +75,33 @@ func (m *Manager) AutoTagMedia(mediaID int64, imagePath string) error {
 			// Create new auto-generated tag
 			tagID, err = m.DB.CreateTag(tagName, generateColor(tagName), true)
 			if err != nil {
-				log.Debugf("Failed to create tag '%s': %v", tagName, err)
+				log.Warnf("Failed to create tag '%s': %v", tagName, err)
 				continue
 			}
-			log.Debugf("Created auto-generated tag: %s", tagName)
+			log.Infof("Created auto-generated tag: %s (from: %s)", tagName, originalName)
+			createdCount++
 		} else {
 			tagID = tag["id"].(int64)
 		}
 
 		// Assign tag to media
 		if err := m.DB.AssignTagToMedia(mediaID, tagID); err != nil {
-			log.Debugf("Failed to assign tag '%s' to media %d: %v", tagName, mediaID, err)
+			// Check if it's a duplicate assignment (not really an error)
+			if strings.Contains(err.Error(), "UNIQUE constraint") {
+				log.Debugf("Tag '%s' already assigned to media %d", tagName, mediaID)
+			} else {
+				log.Warnf("Failed to assign tag '%s' to media %d: %v", tagName, mediaID, err)
+			}
 			continue
 		}
+		assignedCount++
 	}
 
-	log.Debugf("Auto-tagged media %d with %d tags", mediaID, len(allTags))
+	if assignedCount > 0 {
+		log.Infof("Successfully auto-tagged media ID %d with %d tags (%d new tags created)", mediaID, assignedCount, createdCount)
+	} else {
+		log.Warnf("No tags were assigned to media ID %d (all tags may already exist or failed to create)", mediaID)
+	}
 
 	return nil
 }
@@ -129,6 +151,61 @@ func (m *Manager) GetAllTags() ([]map[string]interface{}, error) {
 // DeleteTag deletes a tag
 func (m *Manager) DeleteTag(tagID int64) error {
 	return m.DB.DeleteTag(tagID)
+}
+
+// BackfillUntaggedMedia auto-tags all media that currently has no tags
+func (m *Manager) BackfillUntaggedMedia() (int, int, error) {
+	if !m.AutoTag || m.Classifier == nil {
+		return 0, 0, fmt.Errorf("auto-tagging is not enabled")
+	}
+
+	log.Info("Starting auto-tag backfill for untagged media...")
+
+	// Get all untagged images
+	untagged, err := m.DB.GetUntaggedImages()
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get untagged images: %w", err)
+	}
+
+	total := len(untagged)
+	if total == 0 {
+		log.Info("No untagged media found")
+		return 0, 0, nil
+	}
+
+	log.Infof("Found %d untagged images to process", total)
+
+	successCount := 0
+	errorCount := 0
+
+	for i, media := range untagged {
+		mediaID, ok := media["id"].(int64)
+		if !ok {
+			log.Warnf("Invalid media ID type for item %d", i)
+			errorCount++
+			continue
+		}
+
+		filePath, ok := media["file_path"].(string)
+		if !ok {
+			log.Warnf("Invalid file path for media ID %d", mediaID)
+			errorCount++
+			continue
+		}
+
+		log.Infof("Processing %d/%d: Media ID %d", i+1, total, mediaID)
+
+		if err := m.AutoTagMedia(mediaID, filePath); err != nil {
+			log.Errorf("Failed to auto-tag media ID %d: %v", mediaID, err)
+			errorCount++
+		} else {
+			successCount++
+		}
+	}
+
+	log.Infof("Backfill complete: %d succeeded, %d failed out of %d total", successCount, errorCount, total)
+
+	return successCount, errorCount, nil
 }
 
 // Helper functions

@@ -14,9 +14,14 @@ builds:
     main: ./cmd/scraper
     binary: lemmy-scraper
 
+    # Enable CGO for FTS5 support
+    env:
+      - CGO_ENABLED=1
+
     # Build flags
     flags:
       - -trimpath
+      - -tags=fts5
 
     ldflags:
       - -s -w
@@ -57,7 +62,7 @@ archives:
     files:
       - README.md
       - README.Docker.md
-      - CLAUDE.md
+      - Makefile
       - LICENSE*
       - config.example.yaml
       - config.docker.yaml
