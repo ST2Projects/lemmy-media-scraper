@@ -68,3 +68,49 @@ web_server:
 
   # Port for the web server (default: 8080)
   port: 8080
+
+thumbnails:
+  # Enable thumbnail generation for faster web UI loading (default: true)
+  enabled: true
+
+  # Maximum thumbnail dimensions (maintains aspect ratio)
+  max_width: 400
+  max_height: 400
+
+  # JPEG quality for thumbnails (1-100, higher is better quality)
+  quality: 85
+
+  # Directory to store thumbnails
+  directory: "./thumbnails"
+
+  # Method for generating video thumbnails (ffmpeg required)
+  video_method: "ffmpeg"
+
+recognition:
+  # Enable AI-powered image recognition and classification (default: false)
+  # Requires Ollama with a vision model (e.g., llama3.2-vision)
+  enabled: false
+
+  # Recognition provider (currently only "ollama" is supported)
+  provider: "ollama"
+
+  # Ollama API URL
+  ollama_url: "http://localhost:11434"
+
+  # Model to use for image recognition
+  # Install with: ollama pull llama3.2-vision:latest
+  model: "llama3.2-vision:latest"
+
+  # Automatically create tags from AI classifications
+  auto_tag: true
+
+  # Enable NSFW content detection (experimental)
+  nsfw_detection: false
+
+  # Minimum confidence threshold for auto-tagging (0.0-1.0)
+  confidence_threshold: 0.6
+
+search:
+  # Rebuild the full-text search index on startup (default: false)
+  # Only needed if search results seem incorrect
+  rebuild_index: false

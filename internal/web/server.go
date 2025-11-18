@@ -13,24 +13,40 @@ import (
 
 	"github.com/ST2Projects/lemmy-media-scraper/internal/config"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/database"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/progress"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/tags"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/thumbnails"
+	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
 )
 
 // Server represents the web server
 type Server struct {
-	Config     *config.Config
-	ConfigPath string
-	DB         *database.DB
-	handler    http.Handler
-	templates  *template.Template
+	Config           *config.Config
+	ConfigPath       string
+	DB               *database.DB
+	ProgressTracker  *progress.Tracker
+	TagManager       *tags.Manager
+	ThumbnailGen     *thumbnails.Generator
+	handler          http.Handler
+	templates        *template.Template
+	websocketUpgrader websocket.Upgrader
 }
 
 // New creates a new web server
-func New(cfg *config.Config, configPath string, db *database.DB) *Server {
+func New(cfg *config.Config, configPath string, db *database.DB, progressTracker *progress.Tracker, tagManager *tags.Manager, thumbnailGen *thumbnails.Generator) *Server {
 	s := &Server{
-		Config:     cfg,
-		ConfigPath: configPath,
-		DB:         db,
+		Config:          cfg,
+		ConfigPath:      configPath,
+		DB:              db,
+		ProgressTracker: progressTracker,
+		TagManager:      tagManager,
+		ThumbnailGen:    thumbnailGen,
+		websocketUpgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true // Allow all origins for now (can be restricted in production)
+			},
+		},
 	}
 	s.setupRoutes()
 	return s
@@ -109,8 +125,25 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("/api/comments/", s.handleGetComments)
 	mux.HandleFunc("/api/config", s.handleConfig)
 
-	// Serve media files
+	// Search endpoints
+	mux.HandleFunc("/api/search", s.handleSearch)
+
+	// Tag endpoints
+	mux.HandleFunc("/api/tags", s.handleTags)
+	mux.HandleFunc("/api/tags/", s.handleTagByID)
+	mux.HandleFunc("/api/media-tags/", s.handleMediaTags)
+
+	// Advanced statistics endpoints
+	mux.HandleFunc("/api/stats/timeline", s.handleStatsTimeline)
+	mux.HandleFunc("/api/stats/top-creators", s.handleStatsTopCreators)
+	mux.HandleFunc("/api/stats/storage", s.handleStatsStorage)
+
+	// WebSocket endpoint for real-time progress
+	mux.HandleFunc("/ws/progress", s.handleWebSocket)
+
+	// Serve media files and thumbnails
 	mux.HandleFunc("/media/", s.handleServeMedia)
+	mux.HandleFunc("/thumbnails/", s.handleServeThumbnail)
 
 	// Wrap with security headers middleware
 	s.handler = securityHeadersMiddleware(mux)

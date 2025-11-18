@@ -9,6 +9,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/ST2Projects/lemmy-media-scraper/pkg/models"
+	log "github.com/sirupsen/logrus"
 )
 
 // DB represents the database connection
@@ -100,10 +101,78 @@ func (db *DB) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_scraped_posts_scraped_at ON scraped_posts(scraped_at);
 	CREATE INDEX IF NOT EXISTS idx_comments_post_id ON scraped_comments(post_id);
 	CREATE INDEX IF NOT EXISTS idx_comments_path ON scraped_comments(path);
+
+	-- Tags system
+	CREATE TABLE IF NOT EXISTS media_tags (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		color TEXT,
+		auto_generated BOOLEAN DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_tags_name ON media_tags(name);
+
+	CREATE TABLE IF NOT EXISTS media_tag_assignments (
+		media_id INTEGER NOT NULL,
+		tag_id INTEGER NOT NULL,
+		assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (media_id, tag_id),
+		FOREIGN KEY (media_id) REFERENCES scraped_media(id) ON DELETE CASCADE,
+		FOREIGN KEY (tag_id) REFERENCES media_tags(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_tag_assignments_media ON media_tag_assignments(media_id);
+	CREATE INDEX IF NOT EXISTS idx_tag_assignments_tag ON media_tag_assignments(tag_id);
+
+	-- Thumbnails
+	CREATE TABLE IF NOT EXISTS media_thumbnails (
+		media_id INTEGER PRIMARY KEY,
+		thumbnail_path TEXT NOT NULL,
+		width INTEGER,
+		height INTEGER,
+		generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (media_id) REFERENCES scraped_media(id) ON DELETE CASCADE
+	);
+
+	-- Extended metadata
+	CREATE TABLE IF NOT EXISTS media_metadata (
+		media_id INTEGER PRIMARY KEY,
+		width INTEGER,
+		height INTEGER,
+		duration_seconds REAL,
+		format TEXT,
+		codec TEXT,
+		ai_classifications TEXT,
+		nsfw_score REAL,
+		analyzed_at TIMESTAMP,
+		FOREIGN KEY (media_id) REFERENCES scraped_media(id) ON DELETE CASCADE
+	);
+
+	-- Scraper run tracking for statistics
+	CREATE TABLE IF NOT EXISTS scraper_runs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		completed_at TIMESTAMP,
+		posts_processed INTEGER DEFAULT 0,
+		media_downloaded INTEGER DEFAULT 0,
+		errors_count INTEGER DEFAULT 0,
+		status TEXT DEFAULT 'running'
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_runs_started ON scraper_runs(started_at);
 	`
 
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
+	}
+
+	// Initialize FTS5 search index (optional - gracefully fails if FTS5 not available)
+	if err := db.initSearchIndex(); err != nil {
+		// FTS5 might not be available in all SQLite builds
+		// Log warning but don't fail initialization
+		log.Warnf("FTS5 search index not available: %v", err)
+		log.Warn("Full-text search will be disabled. To enable, rebuild SQLite with FTS5 support.")
 	}
 
 	return nil
@@ -518,4 +587,474 @@ func (db *DB) GetCommunities() ([]CommunityCount, error) {
 // Close closes the database connection
 func (db *DB) Close() error {
 	return db.DB.Close()
+}
+
+// initSearchIndex creates the FTS5 search index and triggers
+func (db *DB) initSearchIndex() error {
+	// Create FTS5 virtual table
+	ftsSchema := `
+		CREATE VIRTUAL TABLE IF NOT EXISTS media_search_fts USING fts5(
+			media_id UNINDEXED,
+			post_title,
+			community_name,
+			creator_name,
+			post_url,
+			content='scraped_media',
+			content_rowid='id'
+		);
+	`
+
+	if _, err := db.Exec(ftsSchema); err != nil {
+		return fmt.Errorf("failed to create FTS table: %w", err)
+	}
+
+	// Create triggers to keep FTS in sync
+	triggers := `
+		CREATE TRIGGER IF NOT EXISTS media_search_insert AFTER INSERT ON scraped_media BEGIN
+			INSERT INTO media_search_fts(rowid, media_id, post_title, community_name, creator_name, post_url)
+			VALUES (new.id, new.id, new.post_title, new.community_name, new.author_name, new.post_url);
+		END;
+
+		CREATE TRIGGER IF NOT EXISTS media_search_delete AFTER DELETE ON scraped_media BEGIN
+			DELETE FROM media_search_fts WHERE rowid = old.id;
+		END;
+
+		CREATE TRIGGER IF NOT EXISTS media_search_update AFTER UPDATE ON scraped_media BEGIN
+			UPDATE media_search_fts
+			SET post_title = new.post_title,
+				community_name = new.community_name,
+				creator_name = new.author_name,
+				post_url = new.post_url
+			WHERE rowid = new.id;
+		END;
+	`
+
+	if _, err := db.Exec(triggers); err != nil {
+		return fmt.Errorf("failed to create FTS triggers: %w", err)
+	}
+
+	// Check if we need to populate the FTS index
+	var ftsCount int
+	if err := db.Get(&ftsCount, "SELECT COUNT(*) FROM media_search_fts"); err != nil {
+		return fmt.Errorf("failed to check FTS count: %w", err)
+	}
+
+	var mediaCount int
+	if err := db.Get(&mediaCount, "SELECT COUNT(*) FROM scraped_media"); err != nil {
+		return fmt.Errorf("failed to check media count: %w", err)
+	}
+
+	// Rebuild index if empty or out of sync
+	if ftsCount == 0 && mediaCount > 0 {
+		rebuildQuery := `
+			INSERT INTO media_search_fts(rowid, media_id, post_title, community_name, creator_name, post_url)
+			SELECT id, id, post_title, community_name, author_name, post_url FROM scraped_media;
+		`
+		if _, err := db.Exec(rebuildQuery); err != nil {
+			return fmt.Errorf("failed to rebuild FTS index: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// SearchMedia performs full-text search across media
+func (db *DB) SearchMedia(query string, limit int, offset int) ([]models.ScrapedMedia, int, error) {
+	if query == "" {
+		return []models.ScrapedMedia{}, 0, nil
+	}
+
+	// Count total results
+	countQuery := `
+		SELECT COUNT(*) FROM media_search_fts
+		WHERE media_search_fts MATCH ?
+	`
+	var total int
+	if err := db.Get(&total, countQuery, query); err != nil {
+		return nil, 0, fmt.Errorf("failed to count search results: %w", err)
+	}
+
+	// Get search results
+	searchQuery := `
+		SELECT m.* FROM scraped_media m
+		INNER JOIN media_search_fts fts ON m.id = fts.media_id
+		WHERE media_search_fts MATCH ?
+		ORDER BY rank
+		LIMIT ? OFFSET ?
+	`
+
+	var media []models.ScrapedMedia
+	if err := db.Select(&media, searchQuery, query, limit, offset); err != nil {
+		return nil, 0, fmt.Errorf("failed to execute search: %w", err)
+	}
+
+	return media, total, nil
+}
+
+// Tag-related methods
+
+// CreateTag creates a new tag
+func (db *DB) CreateTag(name string, color string, autoGenerated bool) (int64, error) {
+	query := `INSERT INTO media_tags (name, color, auto_generated) VALUES (?, ?, ?)`
+	result, err := db.Exec(query, name, color, autoGenerated)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create tag: %w", err)
+	}
+	return result.LastInsertId()
+}
+
+// GetAllTags retrieves all tags
+func (db *DB) GetAllTags() ([]map[string]interface{}, error) {
+	query := `SELECT id, name, color, auto_generated, created_at FROM media_tags ORDER BY name ASC`
+	rows, err := db.Queryx(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tags: %w", err)
+	}
+	defer rows.Close()
+
+	var tags []map[string]interface{}
+	for rows.Next() {
+		tag := make(map[string]interface{})
+		if err := rows.MapScan(tag); err != nil {
+			return nil, fmt.Errorf("failed to scan tag: %w", err)
+		}
+		tags = append(tags, tag)
+	}
+
+	return tags, nil
+}
+
+// GetTagByID retrieves a tag by ID
+func (db *DB) GetTagByID(tagID int64) (map[string]interface{}, error) {
+	query := `SELECT id, name, color, auto_generated, created_at FROM media_tags WHERE id = ?`
+	row := db.QueryRowx(query, tagID)
+
+	tag := make(map[string]interface{})
+	if err := row.MapScan(tag); err != nil {
+		return nil, fmt.Errorf("failed to get tag: %w", err)
+	}
+
+	return tag, nil
+}
+
+// GetTagByName retrieves a tag by name
+func (db *DB) GetTagByName(name string) (map[string]interface{}, error) {
+	query := `SELECT id, name, color, auto_generated, created_at FROM media_tags WHERE name = ?`
+	row := db.QueryRowx(query, name)
+
+	tag := make(map[string]interface{})
+	if err := row.MapScan(tag); err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get tag: %w", err)
+	}
+
+	return tag, nil
+}
+
+// DeleteTag deletes a tag
+func (db *DB) DeleteTag(tagID int64) error {
+	query := `DELETE FROM media_tags WHERE id = ?`
+	_, err := db.Exec(query, tagID)
+	if err != nil {
+		return fmt.Errorf("failed to delete tag: %w", err)
+	}
+	return nil
+}
+
+// AssignTagToMedia assigns a tag to a media item
+func (db *DB) AssignTagToMedia(mediaID int64, tagID int64) error {
+	query := `INSERT OR IGNORE INTO media_tag_assignments (media_id, tag_id) VALUES (?, ?)`
+	_, err := db.Exec(query, mediaID, tagID)
+	if err != nil {
+		return fmt.Errorf("failed to assign tag: %w", err)
+	}
+	return nil
+}
+
+// RemoveTagFromMedia removes a tag from a media item
+func (db *DB) RemoveTagFromMedia(mediaID int64, tagID int64) error {
+	query := `DELETE FROM media_tag_assignments WHERE media_id = ? AND tag_id = ?`
+	_, err := db.Exec(query, mediaID, tagID)
+	if err != nil {
+		return fmt.Errorf("failed to remove tag: %w", err)
+	}
+	return nil
+}
+
+// GetTagsForMedia retrieves all tags assigned to a media item
+func (db *DB) GetTagsForMedia(mediaID int64) ([]map[string]interface{}, error) {
+	query := `
+		SELECT t.id, t.name, t.color, t.auto_generated, t.created_at
+		FROM media_tags t
+		INNER JOIN media_tag_assignments a ON t.id = a.tag_id
+		WHERE a.media_id = ?
+		ORDER BY t.name ASC
+	`
+
+	rows, err := db.Queryx(query, mediaID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tags: %w", err)
+	}
+	defer rows.Close()
+
+	var tags []map[string]interface{}
+	for rows.Next() {
+		tag := make(map[string]interface{})
+		if err := rows.MapScan(tag); err != nil {
+			return nil, fmt.Errorf("failed to scan tag: %w", err)
+		}
+		tags = append(tags, tag)
+	}
+
+	return tags, nil
+}
+
+// Thumbnail-related methods
+
+// SaveThumbnail saves thumbnail metadata
+func (db *DB) SaveThumbnail(mediaID int64, thumbnailPath string, width int, height int) error {
+	query := `INSERT OR REPLACE INTO media_thumbnails (media_id, thumbnail_path, width, height, generated_at)
+	          VALUES (?, ?, ?, ?, datetime('now'))`
+	_, err := db.Exec(query, mediaID, thumbnailPath, width, height)
+	if err != nil {
+		return fmt.Errorf("failed to save thumbnail: %w", err)
+	}
+	return nil
+}
+
+// GetThumbnailPath retrieves the thumbnail path for a media item
+func (db *DB) GetThumbnailPath(mediaID int64) (string, error) {
+	var thumbnailPath string
+	query := `SELECT thumbnail_path FROM media_thumbnails WHERE media_id = ?`
+	err := db.Get(&thumbnailPath, query, mediaID)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get thumbnail path: %w", err)
+	}
+	return thumbnailPath, nil
+}
+
+// SaveMetadata saves extended media metadata
+func (db *DB) SaveMetadata(mediaID int64, metadata map[string]interface{}) error {
+	query := `INSERT OR REPLACE INTO media_metadata
+	          (media_id, width, height, duration_seconds, format, codec, ai_classifications, nsfw_score, analyzed_at)
+	          VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+
+	_, err := db.Exec(query,
+		mediaID,
+		metadata["width"],
+		metadata["height"],
+		metadata["duration_seconds"],
+		metadata["format"],
+		metadata["codec"],
+		metadata["ai_classifications"],
+		metadata["nsfw_score"],
+	)
+	if err != nil {
+		return fmt.Errorf("failed to save metadata: %w", err)
+	}
+	return nil
+}
+
+// GetMetadata retrieves extended metadata for a media item
+func (db *DB) GetMetadata(mediaID int64) (map[string]interface{}, error) {
+	query := `SELECT * FROM media_metadata WHERE media_id = ?`
+	row := db.QueryRowx(query, mediaID)
+
+	metadata := make(map[string]interface{})
+	if err := row.MapScan(metadata); err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get metadata: %w", err)
+	}
+
+	return metadata, nil
+}
+
+// Scraper run tracking methods
+
+// StartScraperRun creates a new scraper run record
+func (db *DB) StartScraperRun() (int64, error) {
+	query := `INSERT INTO scraper_runs (status, started_at) VALUES ('running', datetime('now'))`
+	result, err := db.Exec(query)
+	if err != nil {
+		return 0, fmt.Errorf("failed to start scraper run: %w", err)
+	}
+	return result.LastInsertId()
+}
+
+// UpdateScraperRun updates a scraper run's progress
+func (db *DB) UpdateScraperRun(runID int64, postsProcessed int, mediaDownloaded int, errorsCount int) error {
+	query := `UPDATE scraper_runs SET posts_processed = ?, media_downloaded = ?, errors_count = ? WHERE id = ?`
+	_, err := db.Exec(query, postsProcessed, mediaDownloaded, errorsCount, runID)
+	if err != nil {
+		return fmt.Errorf("failed to update scraper run: %w", err)
+	}
+	return nil
+}
+
+// CompleteScraperRun marks a scraper run as completed
+func (db *DB) CompleteScraperRun(runID int64, status string) error {
+	query := `UPDATE scraper_runs SET status = ?, completed_at = datetime('now') WHERE id = ?`
+	_, err := db.Exec(query, status, runID)
+	if err != nil {
+		return fmt.Errorf("failed to complete scraper run: %w", err)
+	}
+	return nil
+}
+
+// GetRecentScraperRuns retrieves recent scraper runs for statistics
+func (db *DB) GetRecentScraperRuns(limit int) ([]map[string]interface{}, error) {
+	query := `SELECT * FROM scraper_runs ORDER BY started_at DESC LIMIT ?`
+	rows, err := db.Queryx(query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query scraper runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []map[string]interface{}
+	for rows.Next() {
+		run := make(map[string]interface{})
+		if err := rows.MapScan(run); err != nil {
+			return nil, fmt.Errorf("failed to scan run: %w", err)
+		}
+		runs = append(runs, run)
+	}
+
+	return runs, nil
+}
+
+// GetTimelineStats retrieves download statistics over time
+func (db *DB) GetTimelineStats(period string) ([]map[string]interface{}, error) {
+	var groupBy string
+	switch period {
+	case "hour":
+		groupBy = "strftime('%Y-%m-%d %H:00', downloaded_at)"
+	case "day":
+		groupBy = "strftime('%Y-%m-%d', downloaded_at)"
+	case "week":
+		groupBy = "strftime('%Y-W%W', downloaded_at)"
+	case "month":
+		groupBy = "strftime('%Y-%m', downloaded_at)"
+	default:
+		groupBy = "strftime('%Y-%m-%d', downloaded_at)"
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s as period,
+		       COUNT(*) as count,
+		       SUM(file_size) as total_bytes
+		FROM scraped_media
+		GROUP BY period
+		ORDER BY period DESC
+		LIMIT 100
+	`, groupBy)
+
+	rows, err := db.Queryx(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query timeline: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []map[string]interface{}
+	for rows.Next() {
+		stat := make(map[string]interface{})
+		if err := rows.MapScan(stat); err != nil {
+			return nil, fmt.Errorf("failed to scan stat: %w", err)
+		}
+		stats = append(stats, stat)
+	}
+
+	return stats, nil
+}
+
+// GetTopCreators retrieves top content creators by media count
+func (db *DB) GetTopCreators(limit int) ([]map[string]interface{}, error) {
+	query := `
+		SELECT author_name,
+		       COUNT(*) as media_count,
+		       SUM(post_score) as total_score,
+		       MAX(downloaded_at) as last_download
+		FROM scraped_media
+		GROUP BY author_name
+		ORDER BY media_count DESC
+		LIMIT ?
+	`
+
+	rows, err := db.Queryx(query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query top creators: %w", err)
+	}
+	defer rows.Close()
+
+	var creators []map[string]interface{}
+	for rows.Next() {
+		creator := make(map[string]interface{})
+		if err := rows.MapScan(creator); err != nil {
+			return nil, fmt.Errorf("failed to scan creator: %w", err)
+		}
+		creators = append(creators, creator)
+	}
+
+	return creators, nil
+}
+
+// GetStorageBreakdown retrieves storage usage by community and media type
+func (db *DB) GetStorageBreakdown() (map[string]interface{}, error) {
+	result := make(map[string]interface{})
+
+	// By community
+	communityQuery := `
+		SELECT community_name, COUNT(*) as count, SUM(file_size) as total_bytes
+		FROM scraped_media
+		GROUP BY community_name
+		ORDER BY total_bytes DESC
+	`
+
+	rows, err := db.Queryx(communityQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query community breakdown: %w", err)
+	}
+	defer rows.Close()
+
+	var byCommunity []map[string]interface{}
+	for rows.Next() {
+		item := make(map[string]interface{})
+		if err := rows.MapScan(item); err != nil {
+			return nil, fmt.Errorf("failed to scan community: %w", err)
+		}
+		byCommunity = append(byCommunity, item)
+	}
+	result["by_community"] = byCommunity
+
+	// By media type
+	typeQuery := `
+		SELECT media_type, COUNT(*) as count, SUM(file_size) as total_bytes
+		FROM scraped_media
+		GROUP BY media_type
+		ORDER BY total_bytes DESC
+	`
+
+	rows2, err := db.Queryx(typeQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query type breakdown: %w", err)
+	}
+	defer rows2.Close()
+
+	var byType []map[string]interface{}
+	for rows2.Next() {
+		item := make(map[string]interface{})
+		if err := rows2.MapScan(item); err != nil {
+			return nil, fmt.Errorf("failed to scan type: %w", err)
+		}
+		byType = append(byType, item)
+	}
+	result["by_type"] = byType
+
+	return result, nil
 }
