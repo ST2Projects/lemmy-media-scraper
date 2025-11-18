@@ -16,9 +16,11 @@ services:
     # Mount volumes for config and downloads
     volumes:
       # Config directory - place your config.yaml here
-      - ./:/config:ro
+      - ./config:/config:ro
       # Downloads directory - media will be saved here
-      - ./:/downloads:rw
+      - ./downloads:/downloads:rw
+      # Thumbnails directory
+      - ./thumbnails:/thumbnails:rw
 
     # Expose web UI port (if web_server.enabled: true in config)
     ports:
@@ -28,6 +30,15 @@ services:
     environment:
       - TZ=UTC
       - CONFIG_PATH=/config/config.yaml
+
+    # Connect to Ollama service
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+    # Use custom network
+    networks:
+      - scraper-network
 
     # Resource limits (optional - adjust as needed)
     # deploy:
@@ -54,7 +65,53 @@ services:
       retries: 3
       start_period: 5s
 
-# Optional: Create named volumes instead of bind mounts
-# volumes:
-#   config:
-#   downloads:
+  # Ollama service for AI-powered image recognition
+  ollama:
+    image: ollama/ollama:latest
+    container_name: lemmy-scraper-ollama
+    restart: unless-stopped
+
+    # GPU support (optional - uncomment for NVIDIA GPU)
+    # runtime: nvidia
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
+
+    # Volumes for model storage
+    volumes:
+      - ollama-models:/root/.ollama
+
+    # Expose Ollama API port
+    ports:
+      - "11434:11434"
+
+    # Use custom network
+    networks:
+      - scraper-network
+
+    # Resource limits (adjust based on your system)
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+# Networks
+networks:
+  scraper-network:
+    driver: bridge
+
+# Volumes
+volumes:
+  ollama-models:
+    driver: local

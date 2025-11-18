@@ -12,7 +12,11 @@ import (
 	"github.com/ST2Projects/lemmy-media-scraper/internal/config"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/database"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/downloader"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/progress"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/recognition"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/scraper"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/tags"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/thumbnails"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/web"
 	log "github.com/sirupsen/logrus"
 )
@@ -88,12 +92,43 @@ func main() {
 	// Initialize downloader
 	dl := downloader.New(db, cfg.Storage.BaseDirectory)
 
+	// Initialize progress tracker for real-time updates
+	progressTracker := progress.NewTracker()
+
+	// Initialize thumbnail generator if enabled
+	var thumbnailGen *thumbnails.Generator
+	if cfg.Thumbnails.Enabled {
+		thumbnailGen = thumbnails.NewGenerator(
+			cfg.Thumbnails.MaxWidth,
+			cfg.Thumbnails.MaxHeight,
+			cfg.Thumbnails.Quality,
+			cfg.Thumbnails.Directory,
+			cfg.Thumbnails.VideoMethod,
+		)
+		log.Infof("Thumbnail generation enabled (max: %dx%d)", cfg.Thumbnails.MaxWidth, cfg.Thumbnails.MaxHeight)
+	}
+
+	// Initialize image recognition classifier if enabled
+	var classifier recognition.Classifier
+	if cfg.Recognition.Enabled && cfg.Recognition.Provider == "ollama" {
+		classifier = recognition.NewOllamaClassifier(
+			cfg.Recognition.OllamaURL,
+			cfg.Recognition.Model,
+			cfg.Recognition.ConfidenceThreshold,
+			cfg.Recognition.NSFWDetection,
+		)
+		log.Infof("Image recognition enabled with Ollama (model: %s)", cfg.Recognition.Model)
+	}
+
+	// Initialize tag manager
+	tagManager := tags.NewManager(db, classifier, cfg.Recognition.AutoTag)
+
 	// Initialize scraper
 	s := scraper.New(cfg, apiClient, db, dl)
 
 	// Start web server if enabled
 	if cfg.WebServer.Enabled {
-		webServer := web.New(cfg, *configPath, db)
+		webServer := web.New(cfg, *configPath, db, progressTracker, tagManager, thumbnailGen)
 		go func() {
 			log.Infof("Web UI enabled at http://%s:%d", cfg.WebServer.Host, cfg.WebServer.Port)
 			if err := webServer.Start(); err != nil {

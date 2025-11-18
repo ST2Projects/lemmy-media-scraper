@@ -10,12 +10,15 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	Lemmy      LemmyConfig      `yaml:"lemmy" json:"lemmy"`
-	Storage    StorageConfig    `yaml:"storage" json:"storage"`
-	Database   DatabaseConfig   `yaml:"database" json:"database"`
-	Scraper    ScraperConfig    `yaml:"scraper" json:"scraper"`
-	RunMode    RunModeConfig    `yaml:"run_mode" json:"run_mode"`
-	WebServer  WebServerConfig  `yaml:"web_server" json:"web_server"`
+	Lemmy       LemmyConfig       `yaml:"lemmy" json:"lemmy"`
+	Storage     StorageConfig     `yaml:"storage" json:"storage"`
+	Database    DatabaseConfig    `yaml:"database" json:"database"`
+	Scraper     ScraperConfig     `yaml:"scraper" json:"scraper"`
+	RunMode     RunModeConfig     `yaml:"run_mode" json:"run_mode"`
+	WebServer   WebServerConfig   `yaml:"web_server" json:"web_server"`
+	Thumbnails  ThumbnailConfig   `yaml:"thumbnails" json:"thumbnails"`
+	Recognition RecognitionConfig `yaml:"recognition" json:"recognition"`
+	Search      SearchConfig      `yaml:"search" json:"search"`
 }
 
 // LemmyConfig contains Lemmy instance and authentication settings
@@ -60,6 +63,32 @@ type WebServerConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`  // Enable web UI server
 	Host    string `yaml:"host" json:"host"`        // Host to bind to (e.g., "localhost", "0.0.0.0")
 	Port    int    `yaml:"port" json:"port"`        // Port to listen on
+}
+
+// ThumbnailConfig contains thumbnail generation settings
+type ThumbnailConfig struct {
+	Enabled     bool   `yaml:"enabled" json:"enabled"`             // Enable thumbnail generation
+	MaxWidth    int    `yaml:"max_width" json:"max_width"`         // Maximum thumbnail width
+	MaxHeight   int    `yaml:"max_height" json:"max_height"`       // Maximum thumbnail height
+	Quality     int    `yaml:"quality" json:"quality"`             // JPEG quality (1-100)
+	Directory   string `yaml:"directory" json:"directory"`         // Directory to store thumbnails
+	VideoMethod string `yaml:"video_method" json:"video_method"`   // Method for video thumbnails (ffmpeg, frame_extract)
+}
+
+// RecognitionConfig contains image recognition settings
+type RecognitionConfig struct {
+	Enabled            bool    `yaml:"enabled" json:"enabled"`                           // Enable image recognition
+	Provider           string  `yaml:"provider" json:"provider"`                         // Recognition provider (ollama, none)
+	OllamaURL          string  `yaml:"ollama_url" json:"ollama_url"`                     // Ollama API URL
+	Model              string  `yaml:"model" json:"model"`                               // Model to use (e.g., llama3.2-vision:latest)
+	AutoTag            bool    `yaml:"auto_tag" json:"auto_tag"`                         // Automatically create tags from classifications
+	NSFWDetection      bool    `yaml:"nsfw_detection" json:"nsfw_detection"`             // Enable NSFW content detection
+	ConfidenceThreshold float64 `yaml:"confidence_threshold" json:"confidence_threshold"` // Minimum confidence for auto-tagging (0.0-1.0)
+}
+
+// SearchConfig contains search settings
+type SearchConfig struct {
+	RebuildIndex bool `yaml:"rebuild_index" json:"rebuild_index"` // Rebuild FTS index on startup
 }
 
 // LoadConfig loads configuration from a YAML file
@@ -167,6 +196,37 @@ func (c *Config) SetDefaults() {
 	}
 	// Enable web server by default (can be disabled via CLI flag)
 	c.WebServer.Enabled = true
+
+	// Thumbnail defaults
+	if c.Thumbnails.MaxWidth == 0 {
+		c.Thumbnails.MaxWidth = 400
+	}
+	if c.Thumbnails.MaxHeight == 0 {
+		c.Thumbnails.MaxHeight = 400
+	}
+	if c.Thumbnails.Quality == 0 {
+		c.Thumbnails.Quality = 85
+	}
+	if c.Thumbnails.Directory == "" {
+		c.Thumbnails.Directory = "./thumbnails"
+	}
+	if c.Thumbnails.VideoMethod == "" {
+		c.Thumbnails.VideoMethod = "ffmpeg"
+	}
+
+	// Recognition defaults
+	if c.Recognition.Provider == "" {
+		c.Recognition.Provider = "ollama"
+	}
+	if c.Recognition.OllamaURL == "" {
+		c.Recognition.OllamaURL = "http://localhost:11434"
+	}
+	if c.Recognition.Model == "" {
+		c.Recognition.Model = "llama3.2-vision:latest"
+	}
+	if c.Recognition.ConfidenceThreshold == 0 {
+		c.Recognition.ConfidenceThreshold = 0.6
+	}
 }
 
 // normalizeSortType converts user-friendly sort type names to API format

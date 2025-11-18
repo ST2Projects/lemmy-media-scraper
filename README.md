@@ -16,6 +16,13 @@ A Go-based tool for scraping and downloading media (images, videos, and other fi
 - **Flexible media filtering**: Choose which media types to download (images, videos, other)
 - **Organized storage**: Files automatically organized by community
 - **Smart pagination**: Configurable limits with optional stopping at previously seen posts
+- **Web UI**: Browse and manage downloaded media with a modern HTMX-based interface
+- **Full-text search**: Fast FTS5-powered search across titles, communities, creators, and URLs
+- **Tag system**: Organize media with user-defined tags or AI-powered auto-tagging
+- **Thumbnail generation**: Automatic thumbnails for images and videos (FFmpeg required for videos)
+- **Image recognition**: Optional AI-powered classification using Ollama vision models
+- **Statistics dashboard**: Timeline charts, top creators, storage breakdown, and more
+- **Real-time progress**: WebSocket-based live updates during scraping
 
 ## Requirements
 
@@ -74,8 +81,15 @@ See [README.Docker.md](README.Docker.md) for detailed Docker deployment instruct
 ```bash
 git clone https://github.com/ST2Projects/lemmy-media-scraper.git
 cd lemmy-media-scraper
-go build -o lemmy-scraper ./cmd/scraper
+
+# Build with full-text search support (recommended)
+make build-fts5
+
+# Or build manually
+CGO_ENABLED=1 go build -tags fts5 -o lemmy-scraper ./cmd/scraper
 ```
+
+**Note:** The `fts5` build tag is required for full-text search functionality. Without it, the application will work but search will be disabled.
 
 ## Configuration
 
