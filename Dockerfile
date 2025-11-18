@@ -1,5 +1,5 @@
 # Dockerfile for GoReleaser
-# This uses the pre-built binary from GoReleaser's build step
+# Uses pre-built binary with CGO/FTS5 support from GoReleaser
 FROM debian:bookworm-slim
 
 # Install runtime dependencies
@@ -13,20 +13,19 @@ RUN groupadd -g 1000 scraper && \
     useradd -u 1000 -g scraper -s /bin/bash -m scraper
 
 # Create application directories
-RUN mkdir -p /app /config /downloads && \
-    chown -R scraper:scraper /app /config /downloads
+RUN mkdir -p /app /config /downloads /thumbnails && \
+    chown -R scraper:scraper /app /config /downloads /thumbnails
 
 WORKDIR /app
 
-# Copy the pre-built binary from goreleaser's build context
-# With use: buildx, GoReleaser handles the correct binary for each platform
+# Copy pre-built binary from GoReleaser context
 COPY lemmy-scraper .
 
 # Switch to non-root user
 USER scraper
 
 # Define volumes for persistent data
-VOLUME ["/config", "/downloads"]
+VOLUME ["/config", "/downloads", "/thumbnails"]
 
 # Expose web UI port
 EXPOSE 8080

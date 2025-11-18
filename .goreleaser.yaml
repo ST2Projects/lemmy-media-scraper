@@ -130,29 +130,23 @@ release:
 
     **Full Changelog**: https://github.com/ST2Projects/lemmy-media-scraper/compare/{{.PreviousTag}}...{{.Tag}}
 
-# Docker image publishing - disabled due to CGO cross-compilation complexity
-# Multi-arch Docker images with CGO require platform-specific build environments
-# Users can build locally with: docker build --platform=linux/amd64 .
-#
-# dockers_v2:
-#   - id: lemmy-media-scraper
-#     ids:
-#       - lemmy-scraper
-#     images:
-#       - "ghcr.io/st2projects/lemmy-media-scraper"
-#     tags:
-#       - "{{ .Version }}"
-#       - "latest"
-#     dockerfile: Dockerfile
-#     platforms:
-#       - linux/amd64
-#       - linux/arm64
-#     labels:
-#       org.opencontainers.image.created: "{{.Date}}"
-#       org.opencontainers.image.title: "{{.ProjectName}}"
-#       org.opencontainers.image.revision: "{{.FullCommit}}"
-#       org.opencontainers.image.version: "{{.Version}}"
-#       org.opencontainers.image.source: "{{.GitURL}}"
+# Docker image publishing (amd64 only for now)
+dockers:
+  - image_templates:
+      - "ghcr.io/st2projects/lemmy-media-scraper:{{ .Version }}"
+      - "ghcr.io/st2projects/lemmy-media-scraper:latest"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+    goos: linux
+    goarch: amd64
 
 # Announce new releases (optional)
 # announce:
