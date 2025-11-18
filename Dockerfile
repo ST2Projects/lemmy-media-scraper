@@ -19,9 +19,8 @@ RUN mkdir -p /app /config /downloads && \
 WORKDIR /app
 
 # Copy the pre-built binary from goreleaser's build context
-# GoReleaser provides TARGETPLATFORM (e.g., linux/amd64, linux/arm64)
-ARG TARGETPLATFORM
-COPY ${TARGETPLATFORM}/lemmy-scraper .
+# With use: buildx, GoReleaser handles the correct binary for each platform
+COPY lemmy-scraper .
 
 # Switch to non-root user
 USER scraper
