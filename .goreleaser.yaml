@@ -37,14 +37,10 @@ builds:
     goarch:
       - amd64
       - arm64
-      - 386
 
-    # Ignore specific combinations
-    ignore:
-      - goos: darwin
-        goarch: 386
-      - goos: windows
-        goarch: arm64
+    # Note: 386 (32-bit) removed due to CGO cross-compilation complexity with FTS5
+    # FTS5 requires CGO which needs platform-specific C toolchains
+    # 32-bit Linux usage is minimal and declining
 
 archives:
   - id: default
