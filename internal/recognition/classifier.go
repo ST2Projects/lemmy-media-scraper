@@ -399,7 +399,8 @@ func (c *HuggingFaceClassifier) ClassifyFromBytes(imageData []byte) (*Classifica
 	encoded := base64.StdEncoding.EncodeToString(imageData)
 	log.Debugf("Encoded image size: %d bytes (base64: %d chars)", len(imageData), len(encoded))
 
-	// Build the API URL
+	// Build the API URL - HuggingFace Serverless Inference API
+	// Note: Some models may not be available on the free Serverless tier
 	apiURL := fmt.Sprintf("https://api-inference.huggingface.co/models/%s", c.Model)
 
 	// Create request - send raw image bytes for vision models

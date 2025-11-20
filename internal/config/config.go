@@ -225,7 +225,7 @@ func (c *Config) SetDefaults() {
 	if c.Recognition.Model == "" {
 		// Set default model based on provider
 		if c.Recognition.Provider == "huggingface" {
-			c.Recognition.Model = "nlpconnect/vit-gpt2-image-captioning"
+			c.Recognition.Model = "Salesforce/blip-image-captioning-base"
 		} else {
 			c.Recognition.Model = "llama3.2-vision:latest"
 		}
