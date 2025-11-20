@@ -77,13 +77,14 @@ type ThumbnailConfig struct {
 
 // RecognitionConfig contains image recognition settings
 type RecognitionConfig struct {
-	Enabled            bool    `yaml:"enabled" json:"enabled"`                           // Enable image recognition
-	Provider           string  `yaml:"provider" json:"provider"`                         // Recognition provider (ollama, none)
-	OllamaURL          string  `yaml:"ollama_url" json:"ollama_url"`                     // Ollama API URL
-	Model              string  `yaml:"model" json:"model"`                               // Model to use (e.g., llama3.2-vision:latest)
-	AutoTag            bool    `yaml:"auto_tag" json:"auto_tag"`                         // Automatically create tags from classifications
-	NSFWDetection      bool    `yaml:"nsfw_detection" json:"nsfw_detection"`             // Enable NSFW content detection
-	ConfidenceThreshold float64 `yaml:"confidence_threshold" json:"confidence_threshold"` // Minimum confidence for auto-tagging (0.0-1.0)
+	Enabled             bool    `yaml:"enabled" json:"enabled"`                               // Enable image recognition
+	Provider            string  `yaml:"provider" json:"provider"`                             // Recognition provider (ollama, huggingface, none)
+	OllamaURL           string  `yaml:"ollama_url" json:"ollama_url"`                         // Ollama API URL
+	HuggingFaceAPIKey   string  `yaml:"huggingface_api_key" json:"huggingface_api_key"`       // HuggingFace API key
+	Model               string  `yaml:"model" json:"model"`                                   // Model to use (provider-specific)
+	AutoTag             bool    `yaml:"auto_tag" json:"auto_tag"`                             // Automatically create tags from classifications
+	NSFWDetection       bool    `yaml:"nsfw_detection" json:"nsfw_detection"`                 // Enable NSFW content detection
+	ConfidenceThreshold float64 `yaml:"confidence_threshold" json:"confidence_threshold"`     // Minimum confidence for auto-tagging (0.0-1.0)
 }
 
 // SearchConfig contains search settings
@@ -222,7 +223,12 @@ func (c *Config) SetDefaults() {
 		c.Recognition.OllamaURL = "http://localhost:11434"
 	}
 	if c.Recognition.Model == "" {
-		c.Recognition.Model = "llama3.2-vision:latest"
+		// Set default model based on provider
+		if c.Recognition.Provider == "huggingface" {
+			c.Recognition.Model = "nlpconnect/vit-gpt2-image-captioning"
+		} else {
+			c.Recognition.Model = "llama3.2-vision:latest"
+		}
 	}
 	if c.Recognition.ConfidenceThreshold == 0 {
 		c.Recognition.ConfidenceThreshold = 0.6

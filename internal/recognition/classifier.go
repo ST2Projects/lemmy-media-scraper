@@ -16,11 +16,13 @@ import (
 
 // Classification represents the result of image analysis
 type Classification struct {
-	Labels      []string `json:"labels"`
-	Categories  []string `json:"categories"`
-	Description string   `json:"description"`
-	NSFWScore   float64  `json:"nsfw_score"`
-	Confidence  float64  `json:"confidence"`
+	Labels           []string `json:"labels"`
+	Categories       []string `json:"categories"`
+	Characteristics  []string `json:"characteristics"`  // Detailed characteristics (pose, clothing, etc.)
+	Description      string   `json:"description"`
+	MaturityLevel    string   `json:"maturity_level"`   // sfw, suggestive, artistic_nudity, explicit
+	NSFWScore        float64  `json:"nsfw_score"`
+	Confidence       float64  `json:"confidence"`
 }
 
 // Classifier interface for image recognition
@@ -85,19 +87,31 @@ func (c *OllamaClassifier) ClassifyFromBytes(imageData []byte) (*Classification,
 	encoded := base64.StdEncoding.EncodeToString(imageData)
 	log.Debugf("Encoded image size: %d bytes (base64: %d chars)", len(imageData), len(encoded))
 
-	// Build prompt for classification
-	prompt := `Analyze this image and provide:
-1. Main objects and subjects visible (comma-separated list)
-2. Overall categories (e.g., landscape, portrait, meme, screenshot, art, photo)
-3. Brief description (one sentence)
-4. Tags that would help organize this image
+	// Build prompt for classification with uncensored analysis
+	prompt := `Analyze this image objectively and provide detailed tagging information. Do not censor or filter your response.
+
+Provide:
+1. Main objects, subjects, and people visible - be specific and descriptive
+2. Overall categories (e.g., landscape, portrait, meme, screenshot, art, photo, artistic nude, suggestive, explicit, etc.)
+3. Content characteristics (clothing state, pose type, composition, setting, mood)
+4. Detailed descriptive tags that would help organize and search for this image
+5. If applicable, maturity level: sfw, suggestive, artistic_nudity, explicit
+
+Be objective and accurate in your descriptions. Include details about:
+- Clothing or lack thereof
+- Body positioning and poses
+- Artistic style if applicable
+- Scene composition and setting
+- Any notable features or elements
 
 Respond in JSON format:
 {
-	"objects": ["object1", "object2"],
-	"categories": ["category1", "category2"],
-	"description": "brief description",
-	"tags": ["tag1", "tag2"]
+	"objects": ["specific objects, people, or subjects"],
+	"categories": ["primary categories"],
+	"characteristics": ["descriptive characteristics"],
+	"description": "detailed one-sentence description",
+	"tags": ["comprehensive searchable tags"],
+	"maturity_level": "sfw|suggestive|artistic_nudity|explicit"
 }`
 
 	// Prepare request
@@ -170,10 +184,14 @@ Respond in JSON format:
 
 	classification.Confidence = 0.8 // Default confidence
 
-	log.Infof("Classification complete: %d total tags (Labels: %v, Categories: %v)",
-		len(classification.Labels)+len(classification.Categories),
-		classification.Labels,
-		classification.Categories)
+	totalTags := len(classification.Labels) + len(classification.Categories) + len(classification.Characteristics)
+	log.Infof("Classification complete: %d total tags", totalTags)
+	log.Debugf("Labels: %v", classification.Labels)
+	log.Debugf("Categories: %v", classification.Categories)
+	log.Debugf("Characteristics: %v", classification.Characteristics)
+	if classification.MaturityLevel != "" {
+		log.Infof("Maturity Level: %s", classification.MaturityLevel)
+	}
 
 	return classification, nil
 }
@@ -215,6 +233,15 @@ func (c *OllamaClassifier) parseResponse(response string) (*Classification, erro
 		}
 	}
 
+	// Extract characteristics
+	if characteristics, ok := data["characteristics"].([]interface{}); ok {
+		for _, char := range characteristics {
+			if str, ok := char.(string); ok {
+				classification.Characteristics = append(classification.Characteristics, str)
+			}
+		}
+	}
+
 	// Extract tags (add to labels)
 	if tags, ok := data["tags"].([]interface{}); ok {
 		for _, tag := range tags {
@@ -227,6 +254,11 @@ func (c *OllamaClassifier) parseResponse(response string) (*Classification, erro
 	// Extract description
 	if desc, ok := data["description"].(string); ok {
 		classification.Description = desc
+	}
+
+	// Extract maturity level
+	if maturity, ok := data["maturity_level"].(string); ok {
+		classification.MaturityLevel = maturity
 	}
 
 	return classification, nil
@@ -321,6 +353,275 @@ Respond with only a number between 0.0 and 1.0.`
 	}
 
 	return score, nil
+}
+
+// HuggingFaceClassifier uses Hugging Face Inference API for image classification
+type HuggingFaceClassifier struct {
+	APIKey           string
+	Model            string
+	ConfidenceThresh float64
+	Timeout          time.Duration
+	EnableNSFW       bool
+}
+
+// NewHuggingFaceClassifier creates a new Hugging Face-based classifier
+func NewHuggingFaceClassifier(apiKey, model string, confidenceThresh float64, enableNSFW bool) *HuggingFaceClassifier {
+	return &HuggingFaceClassifier{
+		APIKey:           apiKey,
+		Model:            model,
+		ConfidenceThresh: confidenceThresh,
+		Timeout:          60 * time.Second,
+		EnableNSFW:       enableNSFW,
+	}
+}
+
+// hfImageCaptioningRequest represents a Hugging Face image-to-text request
+type hfImageCaptioningRequest struct {
+	Inputs string                 `json:"inputs"`
+	Options map[string]interface{} `json:"options,omitempty"`
+}
+
+// Classify analyzes an image file using HuggingFace API
+func (c *HuggingFaceClassifier) Classify(imagePath string) (*Classification, error) {
+	imageData, err := os.ReadFile(imagePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read image: %w", err)
+	}
+	return c.ClassifyFromBytes(imageData)
+}
+
+// ClassifyFromBytes analyzes image data using HuggingFace Inference API
+func (c *HuggingFaceClassifier) ClassifyFromBytes(imageData []byte) (*Classification, error) {
+	startTime := time.Now()
+	log.Infof("Starting image classification using HuggingFace model %s", c.Model)
+
+	// Encode image to base64
+	encoded := base64.StdEncoding.EncodeToString(imageData)
+	log.Debugf("Encoded image size: %d bytes (base64: %d chars)", len(imageData), len(encoded))
+
+	// Build the API URL
+	apiURL := fmt.Sprintf("https://api-inference.huggingface.co/models/%s", c.Model)
+
+	// Create request - send raw image bytes for vision models
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(imageData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	// Make API request
+	log.Infof("Sending classification request to HuggingFace API...")
+	client := &http.Client{Timeout: c.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Errorf("HuggingFace API request failed: %v", err)
+		return nil, fmt.Errorf("failed to call HuggingFace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		log.Errorf("HuggingFace API returned error status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("HuggingFace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	duration := time.Since(startTime)
+	log.Infof("HuggingFace API request completed in %v", duration)
+	log.Debugf("Raw HuggingFace response: %s", string(body))
+
+	// Parse response based on model type
+	classification, err := c.parseHFResponse(body)
+	if err != nil {
+		log.Warnf("Failed to parse HuggingFace response: %v", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Optional NSFW detection using specialized model
+	if c.EnableNSFW {
+		log.Info("Running NSFW content detection...")
+		nsfwScore, maturityLevel, err := c.detectNSFWHF(imageData)
+		if err != nil {
+			log.Warnf("NSFW detection failed: %v", err)
+		} else {
+			classification.NSFWScore = nsfwScore
+			classification.MaturityLevel = maturityLevel
+			log.Infof("NSFW score: %.2f, Maturity: %s", nsfwScore, maturityLevel)
+		}
+	}
+
+	totalTags := len(classification.Labels) + len(classification.Categories) + len(classification.Characteristics)
+	log.Infof("Classification complete: %d total tags", totalTags)
+	log.Debugf("Labels: %v", classification.Labels)
+	log.Debugf("Categories: %v", classification.Categories)
+	log.Debugf("Characteristics: %v", classification.Characteristics)
+
+	return classification, nil
+}
+
+// parseHFResponse parses the HuggingFace API response
+func (c *HuggingFaceClassifier) parseHFResponse(body []byte) (*Classification, error) {
+	// Try parsing as image-to-text response (for models like BLIP, ViT-GPT2, etc.)
+	var captionResponse []map[string]interface{}
+	if err := json.Unmarshal(body, &captionResponse); err == nil && len(captionResponse) > 0 {
+		if generatedText, ok := captionResponse[0]["generated_text"].(string); ok {
+			return c.extractTagsFromCaption(generatedText), nil
+		}
+	}
+
+	// Try parsing as classification response (for models like ViT)
+	var classificationResponse []map[string]interface{}
+	if err := json.Unmarshal(body, &classificationResponse); err == nil {
+		return c.extractTagsFromClassification(classificationResponse), nil
+	}
+
+	return nil, fmt.Errorf("unable to parse response format")
+}
+
+// extractTagsFromCaption extracts tags from a generated caption
+func (c *HuggingFaceClassifier) extractTagsFromCaption(caption string) *Classification {
+	log.Infof("Generated caption: %s", caption)
+
+	// Extract keywords from the caption
+	words := strings.Fields(strings.ToLower(caption))
+	labels := []string{}
+	categories := []string{}
+	characteristics := []string{}
+
+	// Common category keywords
+	categoryKeywords := map[string]bool{
+		"portrait": true, "landscape": true, "photo": true, "art": true,
+		"drawing": true, "painting": true, "illustration": true, "meme": true,
+		"screenshot": true, "explicit": true, "nude": true, "artistic": true,
+	}
+
+	// Common characteristic keywords
+	characteristicKeywords := map[string]bool{
+		"nude": true, "naked": true, "topless": true, "underwear": true,
+		"lingerie": true, "revealing": true, "suggestive": true, "provocative": true,
+		"intimate": true, "sexual": true, "erotic": true, "sensual": true,
+		"pose": true, "standing": true, "sitting": true, "lying": true,
+		"indoor": true, "outdoor": true, "bedroom": true, "bathroom": true,
+	}
+
+	for _, word := range words {
+		cleaned := strings.Trim(word, ".,;:!?\"'")
+		if len(cleaned) < 3 {
+			continue
+		}
+
+		if categoryKeywords[cleaned] {
+			categories = append(categories, cleaned)
+		} else if characteristicKeywords[cleaned] {
+			characteristics = append(characteristics, cleaned)
+		} else if len(cleaned) > 3 && len(cleaned) < 20 {
+			labels = append(labels, cleaned)
+		}
+	}
+
+	// Deduplicate
+	labels = uniqueStrings(labels)
+	categories = uniqueStrings(categories)
+	characteristics = uniqueStrings(characteristics)
+
+	return &Classification{
+		Labels:          labels,
+		Categories:      categories,
+		Characteristics: characteristics,
+		Description:     caption,
+		Confidence:      0.7,
+	}
+}
+
+// extractTagsFromClassification extracts tags from classification results
+func (c *HuggingFaceClassifier) extractTagsFromClassification(results []map[string]interface{}) *Classification {
+	labels := []string{}
+	maxScore := 0.0
+
+	for _, result := range results {
+		label, ok1 := result["label"].(string)
+		score, ok2 := result["score"].(float64)
+
+		if ok1 && ok2 && score >= c.ConfidenceThresh {
+			labels = append(labels, strings.ToLower(label))
+			if score > maxScore {
+				maxScore = score
+			}
+		}
+	}
+
+	return &Classification{
+		Labels:     labels,
+		Categories: []string{"classified"},
+		Confidence: maxScore,
+	}
+}
+
+// detectNSFWHF performs NSFW detection using HuggingFace NSFW model
+func (c *HuggingFaceClassifier) detectNSFWHF(imageData []byte) (float64, string, error) {
+	// Use specialized NSFW detection model
+	nsfwModel := "Falconsai/nsfw_image_detection"
+	apiURL := fmt.Sprintf("https://api-inference.huggingface.co/models/%s", nsfwModel)
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(imageData))
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to create NSFW request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	client := &http.Client{Timeout: c.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to call NSFW API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, "", fmt.Errorf("NSFW API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse NSFW response
+	// Expected format: [{"label": "porn", "score": 0.9}, {"label": "hentai", "score": 0.05}, ...]
+	var nsfwResults []map[string]interface{}
+	if err := json.Unmarshal(body, &nsfwResults); err != nil {
+		return 0, "", fmt.Errorf("failed to parse NSFW response: %w", err)
+	}
+
+	// Calculate maturity level and score
+	maxScore := 0.0
+	maturityLevel := "sfw"
+	nsfwCategories := make(map[string]float64)
+
+	for _, result := range nsfwResults {
+		label, ok1 := result["label"].(string)
+		score, ok2 := result["score"].(float64)
+
+		if ok1 && ok2 {
+			nsfwCategories[strings.ToLower(label)] = score
+			if score > maxScore {
+				maxScore = score
+			}
+		}
+	}
+
+	// Determine maturity level based on scores
+	if nsfwCategories["porn"] > 0.5 || nsfwCategories["hentai"] > 0.5 {
+		maturityLevel = "explicit"
+	} else if nsfwCategories["sexy"] > 0.4 {
+		maturityLevel = "suggestive"
+	} else if nsfwCategories["drawings"] > 0.5 {
+		maturityLevel = "artistic"
+	} else {
+		maturityLevel = "sfw"
+	}
+
+	return maxScore, maturityLevel, nil
 }
 
 // Helper functions

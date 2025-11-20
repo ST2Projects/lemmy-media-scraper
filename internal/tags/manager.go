@@ -40,8 +40,15 @@ func (m *Manager) AutoTagMedia(mediaID int64, imagePath string) error {
 		return fmt.Errorf("failed to classify image: %w", err)
 	}
 
-	// Combine labels and categories
+	// Combine labels, categories, and characteristics for comprehensive tagging
 	allTags := append(classification.Labels, classification.Categories...)
+	allTags = append(allTags, classification.Characteristics...)
+
+	// Add maturity level as a tag if present
+	if classification.MaturityLevel != "" {
+		allTags = append(allTags, classification.MaturityLevel)
+	}
+
 	allTags = uniqueStrings(allTags)
 
 	if len(allTags) == 0 {
