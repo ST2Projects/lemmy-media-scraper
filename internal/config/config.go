@@ -78,9 +78,11 @@ type ThumbnailConfig struct {
 // RecognitionConfig contains image recognition settings
 type RecognitionConfig struct {
 	Enabled             bool    `yaml:"enabled" json:"enabled"`                               // Enable image recognition
-	Provider            string  `yaml:"provider" json:"provider"`                             // Recognition provider (ollama, huggingface, none)
+	Provider            string  `yaml:"provider" json:"provider"`                             // Recognition provider (ollama, huggingface, gradio_space)
 	OllamaURL           string  `yaml:"ollama_url" json:"ollama_url"`                         // Ollama API URL
 	HuggingFaceAPIKey   string  `yaml:"huggingface_api_key" json:"huggingface_api_key"`       // HuggingFace API key
+	GradioSpaceURL      string  `yaml:"gradio_space_url" json:"gradio_space_url"`             // Gradio Space URL (e.g., https://user-space.hf.space)
+	GradioSpaceAPIKey   string  `yaml:"gradio_space_api_key" json:"gradio_space_api_key"`     // Optional API key for private Gradio Spaces
 	Model               string  `yaml:"model" json:"model"`                                   // Model to use (provider-specific)
 	AutoTag             bool    `yaml:"auto_tag" json:"auto_tag"`                             // Automatically create tags from classifications
 	NSFWDetection       bool    `yaml:"nsfw_detection" json:"nsfw_detection"`                 // Enable NSFW content detection

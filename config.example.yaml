@@ -88,26 +88,61 @@ thumbnails:
 
 recognition:
   # Enable AI-powered image recognition and classification (default: false)
-  # Requires Ollama with a vision model (e.g., llama3.2-vision)
   enabled: false
 
-  # Recognition provider (currently only "ollama" is supported)
+  # Recognition provider: "ollama", "huggingface", or "gradio_space"
+  # - ollama: Runs locally, requires Ollama installed with a vision model
+  # - huggingface: Uses HuggingFace Inference API, requires API key
+  # - gradio_space: Uses your own HuggingFace Gradio Space for custom models
   provider: "ollama"
 
+  # === Ollama Settings (when provider: "ollama") ===
   # Ollama API URL
   ollama_url: "http://localhost:11434"
 
-  # Model to use for image recognition
-  # Install with: ollama pull llama3.2-vision:latest
+  # === HuggingFace Settings (when provider: "huggingface") ===
+  # HuggingFace API key - Get yours at: https://huggingface.co/settings/tokens
+  # IMPORTANT: Keep this secret! Consider using environment variables:
+  #   huggingface_api_key: "${HUGGINGFACE_API_KEY}"
+  huggingface_api_key: ""
+
+  # === Gradio Space Settings (when provider: "gradio_space") ===
+  # URL of your Gradio Space (e.g., https://username-space-name.hf.space)
+  # This allows you to use custom vision models hosted on HuggingFace Spaces
+  gradio_space_url: ""
+
+  # Optional API key for private Gradio Spaces
+  # Leave empty for public Spaces
+  gradio_space_api_key: ""
+
+  # Model to use for image recognition (provider-specific)
+  #
+  # Ollama models (install with: ollama pull <model>):
+  #   - "llama3.2-vision:11b" - Best balance (recommended)
+  #   - "llama3.2-vision:90b" - Most accurate (requires powerful GPU)
+  #   - "llava:13b" - Good alternative
+  #
+  # HuggingFace models (see HUGGINGFACE_SETUP.md for details):
+  #   - "Salesforce/blip-image-captioning-base" - Fast, good balance (default)
+  #   - "Salesforce/blip-image-captioning-large" - Very detailed captions
+  #   - "Salesforce/blip2-opt-2.7b" - Most advanced, uncensored
+  #   - "microsoft/git-large-coco" - Fast alternative
+  #
+  # Gradio Space: Not used - the Space URL determines the model
   model: "llama3.2-vision:latest"
 
   # Automatically create tags from AI classifications
+  # Tags are generated from detected objects, categories, and characteristics
   auto_tag: true
 
-  # Enable NSFW content detection (experimental)
+  # Enable NSFW content detection
+  # - Ollama: Uses uncensored prompts for detailed NSFW tagging
+  # - HuggingFace: Uses specialized NSFW model (Falconsai/nsfw_image_detection)
+  # Provides maturity levels: sfw, suggestive, artistic, explicit
   nsfw_detection: false
 
   # Minimum confidence threshold for auto-tagging (0.0-1.0)
+  # Lower values = more tags, higher values = only confident tags
   confidence_threshold: 0.6
 
 search:
