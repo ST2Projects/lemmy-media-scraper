@@ -131,6 +131,17 @@ func main() {
 				cfg.Recognition.NSFWDetection,
 			)
 			log.Infof("Image recognition enabled with HuggingFace (model: %s)", cfg.Recognition.Model)
+		case "gradio_space":
+			if cfg.Recognition.GradioSpaceURL == "" {
+				log.Fatalf("Gradio Space URL is required when provider is 'gradio_space'")
+			}
+			classifier = recognition.NewGradioSpaceClassifier(
+				cfg.Recognition.GradioSpaceURL,
+				cfg.Recognition.GradioSpaceAPIKey,
+				cfg.Recognition.ConfidenceThreshold,
+				cfg.Recognition.NSFWDetection,
+			)
+			log.Infof("Image recognition enabled with Gradio Space (%s)", cfg.Recognition.GradioSpaceURL)
 		default:
 			log.Warnf("Unknown recognition provider: %s. Recognition will be disabled.", cfg.Recognition.Provider)
 		}

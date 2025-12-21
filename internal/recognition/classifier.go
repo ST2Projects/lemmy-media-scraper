@@ -663,3 +663,309 @@ func truncate(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
+
+// GradioSpaceClassifier uses a custom Gradio Space for image classification
+type GradioSpaceClassifier struct {
+	SpaceURL         string
+	APIKey           string
+	ConfidenceThresh float64
+	Timeout          time.Duration
+	EnableNSFW       bool
+}
+
+// NewGradioSpaceClassifier creates a new Gradio Space-based classifier
+func NewGradioSpaceClassifier(spaceURL, apiKey string, confidenceThresh float64, enableNSFW bool) *GradioSpaceClassifier {
+	return &GradioSpaceClassifier{
+		SpaceURL:         strings.TrimSuffix(spaceURL, "/"),
+		APIKey:           apiKey,
+		ConfidenceThresh: confidenceThresh,
+		Timeout:          120 * time.Second, // Longer timeout for Space cold starts
+		EnableNSFW:       enableNSFW,
+	}
+}
+
+// gradioRequest represents a Gradio API prediction request
+type gradioRequest struct {
+	Data []interface{} `json:"data"`
+}
+
+// gradioResponse represents a Gradio API prediction response
+type gradioResponse struct {
+	Data   []interface{} `json:"data"`
+	Error  string        `json:"error,omitempty"`
+}
+
+// Classify analyzes an image file using the Gradio Space
+func (c *GradioSpaceClassifier) Classify(imagePath string) (*Classification, error) {
+	imageData, err := os.ReadFile(imagePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read image: %w", err)
+	}
+	return c.ClassifyFromBytes(imageData)
+}
+
+// ClassifyFromBytes analyzes image data using the Gradio Space API
+func (c *GradioSpaceClassifier) ClassifyFromBytes(imageData []byte) (*Classification, error) {
+	startTime := time.Now()
+	log.Infof("Starting image classification using Gradio Space at %s", c.SpaceURL)
+
+	// Encode image to base64 data URL
+	encoded := base64.StdEncoding.EncodeToString(imageData)
+	mimeType := "image/jpeg" // Default; could detect from magic bytes
+	if len(imageData) > 4 && string(imageData[1:4]) == "PNG" {
+		mimeType = "image/png"
+	}
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, encoded)
+	log.Debugf("Encoded image size: %d bytes", len(imageData))
+
+	// Try to call the generate_tags endpoint first (returns JSON tags)
+	classification, err := c.callGenerateTags(dataURL)
+	if err != nil {
+		log.Warnf("generate_tags endpoint failed, falling back to analyze_image: %v", err)
+		// Fall back to analyze_image endpoint
+		classification, err = c.callAnalyzeImage(dataURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to classify image: %w", err)
+		}
+	}
+
+	duration := time.Since(startTime)
+	log.Infof("Gradio Space request completed in %v", duration)
+
+	classification.Confidence = 0.8
+	totalTags := len(classification.Labels) + len(classification.Categories) + len(classification.Characteristics)
+	log.Infof("Classification complete: %d total tags", totalTags)
+	log.Debugf("Labels: %v", classification.Labels)
+	log.Debugf("Categories: %v", classification.Categories)
+
+	return classification, nil
+}
+
+// callGenerateTags calls the /generate_tags endpoint
+func (c *GradioSpaceClassifier) callGenerateTags(dataURL string) (*Classification, error) {
+	apiURL := c.SpaceURL + "/api/predict"
+
+	// Request format for generate_tags: [image, num_tags]
+	reqData := gradioRequest{
+		Data: []interface{}{dataURL, 15}, // Request 15 tags
+	}
+
+	jsonData, err := json.Marshal(reqData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+
+	// Add fn_index for generate_tags (typically index 1 for second function)
+	// We'll try both endpoints via the call structure
+	client := &http.Client{Timeout: c.Timeout}
+
+	// Try calling with fn_index for generate_tags
+	tagReqData := map[string]interface{}{
+		"data":     []interface{}{dataURL, 15},
+		"fn_index": 1, // generate_tags is the second function
+	}
+	jsonData, _ = json.Marshal(tagReqData)
+	req, _ = http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Gradio API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Gradio API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	log.Debugf("Raw Gradio response: %s", string(body))
+
+	var gradioResp gradioResponse
+	if err := json.Unmarshal(body, &gradioResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if gradioResp.Error != "" {
+		return nil, fmt.Errorf("Gradio error: %s", gradioResp.Error)
+	}
+
+	if len(gradioResp.Data) == 0 {
+		return nil, fmt.Errorf("empty response from Gradio")
+	}
+
+	// Parse the tags from the response (expected to be JSON string)
+	tagsStr, ok := gradioResp.Data[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("unexpected response format")
+	}
+
+	return c.parseTagsResponse(tagsStr)
+}
+
+// callAnalyzeImage calls the /analyze_image endpoint
+func (c *GradioSpaceClassifier) callAnalyzeImage(dataURL string) (*Classification, error) {
+	apiURL := c.SpaceURL + "/api/predict"
+
+	// Request format for analyze_image: [image, prompt, max_tokens]
+	prompt := "Describe this image in detail, including all objects, people, activities, and notable features. List specific tags for categorization."
+
+	reqData := map[string]interface{}{
+		"data":     []interface{}{dataURL, prompt, 512},
+		"fn_index": 0, // analyze_image is the first function
+	}
+
+	jsonData, err := json.Marshal(reqData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+
+	client := &http.Client{Timeout: c.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Gradio API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Gradio API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	log.Debugf("Raw Gradio response: %s", string(body))
+
+	var gradioResp gradioResponse
+	if err := json.Unmarshal(body, &gradioResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if gradioResp.Error != "" {
+		return nil, fmt.Errorf("Gradio error: %s", gradioResp.Error)
+	}
+
+	if len(gradioResp.Data) == 0 {
+		return nil, fmt.Errorf("empty response from Gradio")
+	}
+
+	// Parse the description
+	description, ok := gradioResp.Data[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("unexpected response format")
+	}
+
+	return c.extractTagsFromDescription(description), nil
+}
+
+// parseTagsResponse parses a JSON array of tags
+func (c *GradioSpaceClassifier) parseTagsResponse(tagsStr string) (*Classification, error) {
+	// Try to parse as JSON array
+	var tags []string
+	if err := json.Unmarshal([]byte(tagsStr), &tags); err != nil {
+		// If not valid JSON, try to extract from the string
+		return c.extractTagsFromDescription(tagsStr), nil
+	}
+
+	// Categorize tags
+	labels := []string{}
+	categories := []string{}
+	characteristics := []string{}
+
+	categoryKeywords := map[string]bool{
+		"portrait": true, "landscape": true, "photo": true, "art": true,
+		"drawing": true, "painting": true, "illustration": true, "meme": true,
+		"screenshot": true, "nature": true, "urban": true, "indoor": true, "outdoor": true,
+	}
+
+	for _, tag := range tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag == "" {
+			continue
+		}
+		if categoryKeywords[tag] {
+			categories = append(categories, tag)
+		} else {
+			labels = append(labels, tag)
+		}
+	}
+
+	if len(categories) == 0 {
+		categories = []string{"general"}
+	}
+
+	return &Classification{
+		Labels:          labels,
+		Categories:      categories,
+		Characteristics: characteristics,
+		Description:     strings.Join(tags, ", "),
+		Confidence:      0.8,
+	}, nil
+}
+
+// extractTagsFromDescription extracts tags from a text description
+func (c *GradioSpaceClassifier) extractTagsFromDescription(description string) *Classification {
+	log.Infof("Extracting tags from description: %s", truncate(description, 100))
+
+	words := strings.Fields(strings.ToLower(description))
+	labels := []string{}
+	categories := []string{}
+
+	categoryKeywords := map[string]bool{
+		"portrait": true, "landscape": true, "photo": true, "art": true,
+		"drawing": true, "painting": true, "illustration": true, "meme": true,
+		"screenshot": true, "nature": true, "urban": true,
+	}
+
+	seen := make(map[string]bool)
+	for _, word := range words {
+		cleaned := strings.Trim(word, ".,;:!?\"'()[]{}")
+		if len(cleaned) < 3 || len(cleaned) > 20 {
+			continue
+		}
+		if seen[cleaned] {
+			continue
+		}
+		seen[cleaned] = true
+
+		if categoryKeywords[cleaned] {
+			categories = append(categories, cleaned)
+		} else if isLikelyLabel(cleaned) {
+			labels = append(labels, cleaned)
+		}
+	}
+
+	if len(categories) == 0 {
+		categories = []string{"general"}
+	}
+
+	return &Classification{
+		Labels:      labels,
+		Categories:  categories,
+		Description: truncate(description, 200),
+		Confidence:  0.7,
+	}
+}
