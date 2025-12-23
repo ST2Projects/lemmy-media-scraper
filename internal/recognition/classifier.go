@@ -741,9 +741,10 @@ func (c *GradioSpaceClassifier) ClassifyFromBytes(imageData []byte) (*Classifica
 	return classification, nil
 }
 
-// callGenerateTags calls the /generate_tags endpoint
+// callGenerateTags calls the /api/generate_tags endpoint
 func (c *GradioSpaceClassifier) callGenerateTags(dataURL string) (*Classification, error) {
-	apiURL := c.SpaceURL + "/api/predict"
+	// Gradio 5.x uses named API endpoints
+	apiURL := c.SpaceURL + "/api/generate_tags"
 
 	// Request format for generate_tags: [image, num_tags]
 	reqData := gradioRequest{
@@ -765,22 +766,7 @@ func (c *GradioSpaceClassifier) callGenerateTags(dataURL string) (*Classificatio
 		req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
 
-	// Add fn_index for generate_tags (typically index 1 for second function)
-	// We'll try both endpoints via the call structure
 	client := &http.Client{Timeout: c.Timeout}
-
-	// Try calling with fn_index for generate_tags
-	tagReqData := map[string]interface{}{
-		"data":     []interface{}{dataURL, 15},
-		"fn_index": 1, // generate_tags is the second function
-	}
-	jsonData, _ = json.Marshal(tagReqData)
-	req, _ = http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	if c.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	}
-
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call Gradio API: %w", err)
@@ -817,16 +803,16 @@ func (c *GradioSpaceClassifier) callGenerateTags(dataURL string) (*Classificatio
 	return c.parseTagsResponse(tagsStr)
 }
 
-// callAnalyzeImage calls the /analyze_image endpoint
+// callAnalyzeImage calls the /api/analyze_image endpoint
 func (c *GradioSpaceClassifier) callAnalyzeImage(dataURL string) (*Classification, error) {
-	apiURL := c.SpaceURL + "/api/predict"
+	// Gradio 5.x uses named API endpoints
+	apiURL := c.SpaceURL + "/api/analyze_image"
 
 	// Request format for analyze_image: [image, prompt, max_tokens]
 	prompt := "Describe this image in detail, including all objects, people, activities, and notable features. List specific tags for categorization."
 
-	reqData := map[string]interface{}{
-		"data":     []interface{}{dataURL, prompt, 512},
-		"fn_index": 0, // analyze_image is the first function
+	reqData := gradioRequest{
+		Data: []interface{}{dataURL, prompt, 512},
 	}
 
 	jsonData, err := json.Marshal(reqData)
