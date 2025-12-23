@@ -199,4 +199,5 @@ with gr.Blocks(title="Image Recognition API") as demo:
 
 # Launch configured for HuggingFace Spaces
 # show_api=False prevents gradio from generating API docs that crash with Qwen model types
-demo.launch(server_name="0.0.0.0", server_port=7860, show_api=False)
+# ssr_mode=False disables SSR which blocks POST requests to API endpoints
+demo.launch(server_name="0.0.0.0", server_port=7860, show_api=False, ssr_mode=False)
