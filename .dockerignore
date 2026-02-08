@@ -54,3 +54,14 @@ web/build/
 
 # Logs
 *.log
+
+# Sensitive files
+config.yaml
+.env
+.env.*
+.env.local
+.env.production
+*.key
+*.pem
+*.crt
+auth.db

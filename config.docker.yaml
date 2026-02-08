@@ -69,9 +69,9 @@ web_server:
   # Use "0.0.0.0" in Docker to allow access from outside the container
   host: "0.0.0.0"
 
-  # Port for the web server (default: 8080)
+  # Port for the API server (default: 8081)
   # Must match the EXPOSE directive in Dockerfile and ports mapping in docker-compose.yml
-  port: 8080
+  port: 8081
 
 thumbnails:
   # Enable thumbnail generation for faster web UI loading (default: true)
@@ -89,30 +89,6 @@ thumbnails:
 
   # Method for generating video thumbnails (ffmpeg required)
   video_method: "ffmpeg"
-
-recognition:
-  # Enable AI-powered image recognition and classification (default: false)
-  # Requires Ollama service to be running (included in docker-compose.yml)
-  enabled: false
-
-  # Recognition provider (currently only "ollama" is supported)
-  provider: "ollama"
-
-  # Ollama API URL - use service name for Docker networking
-  ollama_url: "http://ollama:11434"
-
-  # Model to use for image recognition
-  # Pull the model: docker exec -it lemmy-scraper-ollama ollama pull llama3.2-vision:latest
-  model: "llama3.2-vision:latest"
-
-  # Automatically create tags from AI classifications
-  auto_tag: true
-
-  # Enable NSFW content detection (experimental)
-  nsfw_detection: false
-
-  # Minimum confidence threshold for auto-tagging (0.0-1.0)
-  confidence_threshold: 0.6
 
 search:
   # Rebuild the full-text search index on startup (default: false)

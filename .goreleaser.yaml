@@ -132,6 +132,7 @@ release:
 
 # Docker image publishing (amd64 only for now)
 dockers:
+  # Go backend image
   - image_templates:
       - "ghcr.io/st2projects/lemmy-media-scraper:{{ .Version }}"
       - "ghcr.io/st2projects/lemmy-media-scraper:latest"
@@ -147,6 +148,23 @@ dockers:
       - "--label=org.opencontainers.image.source={{.GitURL}}"
     goos: linux
     goarch: amd64
+
+  # SvelteKit web UI image
+  - image_templates:
+      - "ghcr.io/st2projects/lemmy-media-scraper-web:{{ .Version }}"
+      - "ghcr.io/st2projects/lemmy-media-scraper-web:latest"
+    dockerfile: Dockerfile.web
+    use: buildx
+    extra_files:
+      - web/
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}-web"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
 
 # Announce new releases (optional)
 # announce:

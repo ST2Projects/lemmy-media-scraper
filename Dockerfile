@@ -1,11 +1,15 @@
-# Dockerfile for GoReleaser
-# Uses pre-built binary with CGO/FTS5 support from GoReleaser
+# Dockerfile for the Go backend (lemmy-scraper)
+# This Dockerfile expects the Go binary to be pre-built (e.g., by GoReleaser)
+# and available in the build context as 'lemmy-scraper'.
+#
+# For local development, build the binary first:
+#   CGO_ENABLED=1 go build -tags fts5 -o lemmy-scraper ./cmd/scraper
+
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
+# Install runtime dependencies (ffmpeg for video thumbnails, ca-certificates for HTTPS)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    tzdata \
+    ca-certificates tzdata ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -18,8 +22,8 @@ RUN mkdir -p /app /config /downloads /thumbnails && \
 
 WORKDIR /app
 
-# Copy pre-built binary from GoReleaser context
-COPY lemmy-scraper .
+# Copy pre-built Go binary
+COPY --chown=scraper:scraper lemmy-scraper .
 
 # Switch to non-root user
 USER scraper
@@ -27,16 +31,15 @@ USER scraper
 # Define volumes for persistent data
 VOLUME ["/config", "/downloads", "/thumbnails"]
 
-# Expose web UI port
-EXPOSE 8080
+# Expose Go API port
+EXPOSE 8081
 
 # Set environment variables with defaults
 ENV CONFIG_PATH=/config/config.yaml
 
-# Health check
+# Health check against the Go API server
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD pgrep -x lemmy-scraper || exit 1
 
-# Run the application
 ENTRYPOINT ["/app/lemmy-scraper"]
 CMD ["-config", "/config/config.yaml"]
