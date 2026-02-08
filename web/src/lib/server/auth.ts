@@ -1,8 +1,9 @@
 import { betterAuth } from 'better-auth';
 import Database from 'better-sqlite3';
 import { env } from '$env/dynamic/private';
+import { building } from '$app/environment';
 
-if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET === 'build-placeholder') {
+if (!building && (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET === 'build-placeholder')) {
 	throw new Error(
 		'BETTER_AUTH_SECRET environment variable must be set to a secure random string (at least 32 characters). ' +
 		'Generate one with: openssl rand -base64 32'
