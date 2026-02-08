@@ -13,7 +13,7 @@ if (!building && (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET === 'build-p
 export const auth = betterAuth({
 	database: new Database(env.AUTH_DB_PATH || 'auth.db'),
 	secret: env.BETTER_AUTH_SECRET,
-	baseURL: env.BETTER_AUTH_URL || 'http://localhost:8080',
+	baseURL: env.ORIGIN || env.BETTER_AUTH_URL || 'http://localhost:8080',
 	emailAndPassword: {
 		enabled: true
 	}
