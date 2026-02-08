@@ -71,6 +71,10 @@ services:
     ports:
       - "8080:8080"
 
+    # Mount volume for persistent auth database
+    volumes:
+      - ./data:/data:rw
+
     # Environment variables
     environment:
       - TZ=UTC
@@ -84,6 +88,12 @@ services:
       # IMPORTANT: For remote/LAN access, replace 'localhost' with your server's hostname or IP
       # Example: ws://192.168.1.100:8081 or ws://myserver.local:8081
       - PUBLIC_WS_URL=ws://localhost:8081
+      # Authentication secret - REQUIRED, generate with: openssl rand -base64 32
+      - BETTER_AUTH_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_32
+      # Auth database path (persisted via volume mount)
+      - AUTH_DB_PATH=/data/auth.db
+      # Auth base URL (should match ORIGIN)
+      - BETTER_AUTH_URL=http://localhost:8080
 
     # Use custom network (same as backend for inter-service communication)
     networks:

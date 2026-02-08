@@ -39,17 +39,9 @@ func New(cfg *config.Config, configPath string, db *database.DB, progressTracker
 		ThumbnailGen:    thumbnailGen,
 		websocketUpgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
-				origin := r.Header.Get("Origin")
-				if origin == "" {
-					return true // Allow non-browser clients
-				}
-				allowedOrigins := map[string]bool{
-					"http://localhost:5173": true,
-					"http://localhost:8080": true,
-					"http://localhost:8081": true,
-					fmt.Sprintf("http://%s:%d", cfg.WebServer.Host, cfg.WebServer.Port): true,
-				}
-				return allowedOrigins[origin]
+				// Allow all origins - WebSocket provides read-only progress data
+				// and the SvelteKit frontend handles authentication
+				return true
 			},
 		},
 	}
@@ -57,19 +49,15 @@ func New(cfg *config.Config, configPath string, db *database.DB, progressTracker
 	return s
 }
 
-// corsMiddleware adds CORS headers for SvelteKit dev server
+// corsMiddleware adds CORS headers for frontend requests
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 
-		// Allow requests from SvelteKit dev server, production frontend, and the API server itself
-		allowedOrigins := map[string]bool{
-			"http://localhost:5173": true,
-			"http://localhost:8080": true,
-			"http://localhost:8081": true,
-		}
-
-		if allowedOrigins[origin] {
+		// Allow any origin - the Go API is accessed by the SvelteKit frontend
+		// (server-side proxy) and by browsers for WebSocket connections.
+		// Authentication is handled by the SvelteKit layer.
+		if origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 
@@ -98,8 +86,10 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		// Enable XSS protection (legacy but still useful)
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
 
-		// Content Security Policy - restrictive for API-only server
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		// Skip restrictive CSP for media/thumbnail endpoints (they serve files)
+		if !strings.HasPrefix(r.URL.Path, "/media/") && !strings.HasPrefix(r.URL.Path, "/thumbnails/") {
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		}
 
 		// Control referrer information
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")

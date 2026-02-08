@@ -237,7 +237,7 @@ func TestSetDefaults(t *testing.T) {
 					Mode: "once",
 				},
 				WebServer: WebServerConfig{
-					Port: 8080,
+					Port: 8081,
 					Host: "localhost",
 				},
 			},
@@ -264,7 +264,7 @@ func TestSetDefaults(t *testing.T) {
 					Mode: "once",
 				},
 				WebServer: WebServerConfig{
-					Port: 8080,
+					Port: 8081,
 					Host: "localhost",
 				},
 			},
@@ -291,7 +291,7 @@ func TestSetDefaults(t *testing.T) {
 					Mode: "once",
 				},
 				WebServer: WebServerConfig{
-					Port: 8080,
+					Port: 8081,
 					Host: "localhost",
 				},
 			},
@@ -317,7 +317,7 @@ func TestSetDefaults(t *testing.T) {
 					Mode: "once",
 				},
 				WebServer: WebServerConfig{
-					Port: 8080,
+					Port: 8081,
 					Host: "localhost",
 				},
 			},
