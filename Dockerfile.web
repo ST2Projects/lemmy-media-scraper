@@ -11,12 +11,8 @@ RUN BETTER_AUTH_SECRET=build-placeholder npm run build
 # Stage 2: Production runtime using Bun (avoids using node directly)
 FROM oven/bun:1-alpine
 
-# Create non-root user
-RUN addgroup -g 1000 webapp && \
-    adduser -u 1000 -G webapp -s /bin/sh -D webapp
-
-# Create application directory
-RUN mkdir -p /app && chown webapp:webapp /app
+# Create application directory (use existing 'bun' user from base image)
+RUN mkdir -p /app && chown bun:bun /app
 
 WORKDIR /app
 
@@ -26,7 +22,7 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 
 # Switch to non-root user
-USER webapp
+USER bun
 
 # Expose SvelteKit port
 EXPOSE 8080
