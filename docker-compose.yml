@@ -23,8 +23,9 @@ services:
       # Thumbnails directory
       - ./thumbnails:/thumbnails:rw
 
-    # Go API is only accessible via the internal Docker network (scraper-network).
-    # No host port mapping — all external access goes through the lemmy-web frontend.
+    # Go API port exposed for WebSocket connections from browser
+    ports:
+      - "8081:8081"
 
     # Environment variables
     environment:
@@ -44,11 +45,11 @@ services:
 
     # Health check
     healthcheck:
-      test: ["CMD", "pgrep", "-x", "lemmy-scraper"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/api/stats"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 5s
+      start_period: 10s
 
   # SvelteKit web UI frontend
   lemmy-web:
@@ -77,8 +78,11 @@ services:
       # The SvelteKit server-side routes proxy API calls to the Go backend
       - GO_BACKEND_URL=http://lemmy-scraper:8081
       # SvelteKit ORIGIN setting for CSRF protection
+      # IMPORTANT: For remote/LAN access, replace 'localhost' with your server's hostname or IP
       - ORIGIN=http://localhost:8080
       # WebSocket URL for real-time progress updates (browser connects directly to Go backend)
+      # IMPORTANT: For remote/LAN access, replace 'localhost' with your server's hostname or IP
+      # Example: ws://192.168.1.100:8081 or ws://myserver.local:8081
       - PUBLIC_WS_URL=ws://localhost:8081
 
     # Use custom network (same as backend for inter-service communication)

@@ -9,7 +9,7 @@ FROM debian:bookworm-slim
 
 # Install runtime dependencies (ffmpeg for video thumbnails, ca-certificates for HTTPS)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata ffmpeg \
+    ca-certificates tzdata ffmpeg wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -39,7 +39,7 @@ ENV CONFIG_PATH=/config/config.yaml
 
 # Health check against the Go API server
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD pgrep -x lemmy-scraper || exit 1
+  CMD wget -q --spider http://localhost:8081/api/stats || exit 1
 
 ENTRYPOINT ["/app/lemmy-scraper"]
 CMD ["-config", "/config/config.yaml"]

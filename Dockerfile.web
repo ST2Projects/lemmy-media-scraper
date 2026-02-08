@@ -8,11 +8,11 @@ RUN npm ci
 COPY web/ ./
 RUN BETTER_AUTH_SECRET=build-placeholder npm run build
 
-# Stage 2: Production runtime using Bun (avoids using node directly)
-FROM oven/bun:1-alpine
+# Stage 2: Production runtime
+FROM node:20-alpine
 
-# Create application directory (use existing 'bun' user from base image)
-RUN mkdir -p /app && chown bun:bun /app
+# Create application directory with non-root user
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 && mkdir -p /app && chown nodejs:nodejs /app
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 
 # Switch to non-root user
-USER bun
+USER nodejs
 
 # Expose SvelteKit port
 EXPOSE 8080
@@ -38,5 +38,5 @@ ENV PUBLIC_WS_URL=ws://localhost:8081
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD wget -q --spider http://localhost:8080/ || exit 1
 
-# Start with Bun instead of Node
-CMD ["bun", "run", "build/index.js"]
+# Start with Node.js
+CMD ["node", "build/index.js"]

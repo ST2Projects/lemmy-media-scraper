@@ -228,7 +228,7 @@ The `config.docker.yaml` file is pre-configured with Docker-appropriate defaults
 - **Storage path:** `/downloads` (maps to mounted volume)
 - **Database path:** `/downloads/lemmy-scraper.db` (persists with downloaded media)
 - **Web server host:** `0.0.0.0` (allows access from outside container)
-- **Web server port:** `8080` (matches exposed port)
+- **Web server port:** `8081` (Go API server, matches Dockerfile EXPOSE)
 - **Run mode:** `continuous` (keeps container running)
 
 ## Docker Compose Configuration
@@ -237,7 +237,7 @@ The `docker-compose.yml` includes:
 
 - **Automatic restart:** `restart: unless-stopped`
 - **Health checks:** Monitors process health
-- **Port mapping:** `8080:8080` for web UI
+- **Port mapping:** `8080:8080` for web UI, `8081:8081` for Go API/WebSocket
 - **Logging:** Rotated JSON logs (max 10MB × 3 files)
 - **Resource limits:** Optional CPU and memory limits (commented out)
 
@@ -341,7 +341,7 @@ Common issues:
    web_server:
      enabled: true
      host: "0.0.0.0"
-     port: 8080
+     port: 8081
    ```
 
 2. Verify the port is mapped in `docker-compose.yml`:
@@ -391,6 +391,13 @@ Optional environment variables you can set in `docker-compose.yml`:
 - `TZ`: Timezone (default: `UTC`)
 - `CONFIG_PATH`: Path to config file (default: `/config/config.yaml`)
 
+The `lemmy-web` service uses these additional environment variables:
+
+- `GO_BACKEND_URL`: URL of the Go backend API (default: `http://lemmy-scraper:8081`)
+- `ORIGIN`: SvelteKit ORIGIN for CSRF protection (default: `http://localhost:8080`)
+- `PUBLIC_WS_URL`: WebSocket URL for real-time progress updates (default: `ws://localhost:8081`)
+- `BETTER_AUTH_SECRET`: **Required.** Secret key for authentication. Generate with: `openssl rand -base64 32`
+
 Example:
 
 ```yaml
@@ -399,11 +406,23 @@ environment:
   - CONFIG_PATH=/config/custom-config.yaml
 ```
 
+## Remote / LAN Access
+
+By default, the Docker Compose setup uses `localhost` in several places. If you're accessing the web UI from another machine on your network, update these environment variables in `docker-compose.yml`:
+
+```yaml
+# lemmy-web service environment:
+- ORIGIN=http://YOUR_SERVER_IP:8080
+- PUBLIC_WS_URL=ws://YOUR_SERVER_IP:8081
+```
+
+Replace `YOUR_SERVER_IP` with your server's hostname or IP address (e.g., `192.168.1.100` or `myserver.local`).
+
 ## Security Considerations
 
 1. **Config volume is read-only:** Prevents accidental modification of credentials
 2. **Non-root user:** Container runs as UID 1000 (scraper user)
-3. **Network isolation:** Only exposes port 8080 (web UI)
+3. **Network isolation:** Exposes port 8080 (web UI) and 8081 (Go API/WebSocket)
 4. **Credentials:** Store config.yaml securely and never commit it to version control
 
 ## Production Deployment
