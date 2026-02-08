@@ -2,8 +2,10 @@ import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import Database from 'better-sqlite3';
 import { env } from '$env/dynamic/private';
+import { authReady } from '$lib/server/auth';
 
 export const load: PageServerLoad = async () => {
+	await authReady;
 	const dbPath = env.AUTH_DB_PATH || 'auth.db';
 	try {
 		const db = new Database(dbPath, { readonly: true });

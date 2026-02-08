@@ -1,4 +1,4 @@
-import { auth } from '$lib/server/auth';
+import { auth, authReady } from '$lib/server/auth';
 import { redirect, type Handle } from '@sveltejs/kit';
 import Database from 'better-sqlite3';
 import { env } from '$env/dynamic/private';
@@ -17,6 +17,8 @@ function needsSetup(): boolean {
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
+	// Ensure auth tables exist before handling requests
+	await authReady;
 	const session = await auth.api.getSession({ headers: event.request.headers });
 	event.locals.session = session;
 

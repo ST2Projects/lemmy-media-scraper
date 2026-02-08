@@ -18,3 +18,10 @@ export const auth = betterAuth({
 		enabled: true
 	}
 });
+
+// Run migrations to create auth tables (user, session, account, verification)
+export const authReady = !building
+	? auth.$context.then(ctx => ctx.runMigrations()).catch(err => {
+		console.error('Failed to run auth migrations:', err);
+	})
+	: Promise.resolve();
