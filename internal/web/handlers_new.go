@@ -3,6 +3,8 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -22,6 +24,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			"results": []interface{}{},
 			"total":   0,
 		})
+		return
+	}
+
+	if len(query) > 500 {
+		http.Error(w, "Query too long (max 500 characters)", http.StatusBadRequest)
 		return
 	}
 
@@ -48,151 +55,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		"limit":   limit,
 		"offset":  offset,
 	})
-}
-
-// handleTags handles GET (list all tags) and POST (create tag) requests
-func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		tags, err := s.TagManager.GetAllTags()
-		if err != nil {
-			log.Errorf("Failed to get tags: %v", err)
-			http.Error(w, "Failed to retrieve tags", http.StatusInternalServerError)
-			return
-		}
-		respondJSON(w, map[string]interface{}{"tags": tags})
-
-	case http.MethodPost:
-		var req struct {
-			Name  string `json:"name"`
-			Color string `json:"color"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		if req.Name == "" {
-			http.Error(w, "Tag name is required", http.StatusBadRequest)
-			return
-		}
-
-		tagID, err := s.TagManager.CreateUserTag(req.Name, req.Color)
-		if err != nil {
-			log.Errorf("Failed to create tag: %v", err)
-			http.Error(w, "Failed to create tag", http.StatusInternalServerError)
-			return
-		}
-
-		tag, _ := s.DB.GetTagByID(tagID)
-		respondJSON(w, map[string]interface{}{"tag": tag})
-
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// handleTagByID handles GET and DELETE for a specific tag
-func (s *Server) handleTagByID(w http.ResponseWriter, r *http.Request) {
-	// Extract tag ID from path
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 3 {
-		http.Error(w, "Invalid tag ID", http.StatusBadRequest)
-		return
-	}
-
-	tagID, err := strconv.ParseInt(pathParts[2], 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid tag ID", http.StatusBadRequest)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		tag, err := s.DB.GetTagByID(tagID)
-		if err != nil {
-			http.Error(w, "Tag not found", http.StatusNotFound)
-			return
-		}
-		respondJSON(w, map[string]interface{}{"tag": tag})
-
-	case http.MethodDelete:
-		if err := s.TagManager.DeleteTag(tagID); err != nil {
-			log.Errorf("Failed to delete tag: %v", err)
-			http.Error(w, "Failed to delete tag", http.StatusInternalServerError)
-			return
-		}
-		respondJSON(w, map[string]interface{}{"success": true})
-
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// handleMediaTags handles GET (list tags for media), POST (assign tag), and DELETE (remove tag)
-func (s *Server) handleMediaTags(w http.ResponseWriter, r *http.Request) {
-	// Extract media ID from path: /api/media-tags/{mediaID}[/{tagID}]
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 3 {
-		http.Error(w, "Invalid media ID", http.StatusBadRequest)
-		return
-	}
-
-	mediaID, err := strconv.ParseInt(pathParts[2], 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid media ID", http.StatusBadRequest)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		tags, err := s.TagManager.GetTagsForMedia(mediaID)
-		if err != nil {
-			log.Errorf("Failed to get media tags: %v", err)
-			http.Error(w, "Failed to retrieve tags", http.StatusInternalServerError)
-			return
-		}
-		respondJSON(w, map[string]interface{}{"tags": tags})
-
-	case http.MethodPost:
-		var req struct {
-			TagID int64 `json:"tag_id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		if err := s.TagManager.AssignTag(mediaID, req.TagID); err != nil {
-			log.Errorf("Failed to assign tag: %v", err)
-			http.Error(w, "Failed to assign tag", http.StatusInternalServerError)
-			return
-		}
-		respondJSON(w, map[string]interface{}{"success": true})
-
-	case http.MethodDelete:
-		// Extract tag ID from path
-		if len(pathParts) < 4 {
-			http.Error(w, "Invalid tag ID", http.StatusBadRequest)
-			return
-		}
-
-		tagID, err := strconv.ParseInt(pathParts[3], 10, 64)
-		if err != nil {
-			http.Error(w, "Invalid tag ID", http.StatusBadRequest)
-			return
-		}
-
-		if err := s.TagManager.RemoveTag(mediaID, tagID); err != nil {
-			log.Errorf("Failed to remove tag: %v", err)
-			http.Error(w, "Failed to remove tag", http.StatusInternalServerError)
-			return
-		}
-		respondJSON(w, map[string]interface{}{"success": true})
-
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
 }
 
 // handleStatsTimeline returns download statistics over time
@@ -324,38 +186,34 @@ func (s *Server) handleServeThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Serve the file
-	http.ServeFile(w, r, thumbnailPath)
-}
+	// Prevent path traversal - clean and validate the thumbnail path
+	cleanedPath := filepath.Clean(thumbnailPath)
+	baseDir := filepath.Clean(s.Config.Thumbnails.Directory)
 
-// handleTagBackfill triggers auto-tagging for all untagged media
-func (s *Server) handleTagBackfill(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if s.TagManager == nil || s.TagManager.Classifier == nil {
-		http.Error(w, "Auto-tagging is not enabled (check recognition settings)", http.StatusServiceUnavailable)
-		return
-	}
-
-	log.Info("Auto-tag backfill requested via API")
-
-	// Run backfill in a goroutine to avoid timeout
-	go func() {
-		successCount, errorCount, err := s.TagManager.BackfillUntaggedMedia()
-		if err != nil {
-			log.Errorf("Backfill failed: %v", err)
-		} else {
-			log.Infof("Backfill completed: %d succeeded, %d failed", successCount, errorCount)
+	// Resolve symlinks to prevent symlink-based bypasses
+	resolvedPath, err := filepath.EvalSymlinks(cleanedPath)
+	if err != nil {
+		if _, statErr := os.Stat(cleanedPath); statErr != nil {
+			http.Error(w, "Thumbnail not found", http.StatusNotFound)
+			return
 		}
-	}()
+		resolvedPath = cleanedPath
+	}
 
-	respondJSON(w, map[string]interface{}{
-		"message": "Auto-tag backfill started in background. Check logs for progress.",
-		"status":  "started",
-	})
+	resolvedBase, err := filepath.EvalSymlinks(baseDir)
+	if err != nil {
+		resolvedBase = baseDir
+	}
+
+	// Ensure the resolved path is within the thumbnails directory
+	if !strings.HasPrefix(resolvedPath, resolvedBase) {
+		log.Warnf("Blocked thumbnail path traversal attempt: %s -> %s", thumbnailPath, resolvedPath)
+		http.Error(w, "Invalid path", http.StatusForbidden)
+		return
+	}
+
+	// Serve the file
+	http.ServeFile(w, r, resolvedPath)
 }
 
 // respondJSON is a helper function to send JSON responses
@@ -367,39 +225,3 @@ func respondJSON(w http.ResponseWriter, data interface{}) {
 	}
 }
 
-// handleStatsPage serves the statistics dashboard page
-func (s *Server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
-	// Get basic stats
-	stats, _ := s.DB.GetStats()
-	timeline, _ := s.DB.GetTimelineStats("day")
-	topCreators, _ := s.DB.GetTopCreators(10)
-	storage, _ := s.DB.GetStorageBreakdown()
-
-	data := map[string]interface{}{
-		"Stats":       stats,
-		"Timeline":    timeline,
-		"TopCreators": topCreators,
-		"Storage":     storage,
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.ExecuteTemplate(w, "stats", data); err != nil {
-		log.Errorf("Template error: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
-}
-
-// handleTagsPage serves the tag management page
-func (s *Server) handleTagsPage(w http.ResponseWriter, r *http.Request) {
-	tags, _ := s.TagManager.GetAllTags()
-
-	data := map[string]interface{}{
-		"Tags": tags,
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.ExecuteTemplate(w, "tags", data); err != nil {
-		log.Errorf("Template error: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
-}

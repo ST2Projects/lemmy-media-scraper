@@ -13,9 +13,7 @@ import (
 	"github.com/ST2Projects/lemmy-media-scraper/internal/database"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/downloader"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/progress"
-	"github.com/ST2Projects/lemmy-media-scraper/internal/recognition"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/scraper"
-	"github.com/ST2Projects/lemmy-media-scraper/internal/tags"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/thumbnails"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/web"
 	log "github.com/sirupsen/logrus"
@@ -108,54 +106,12 @@ func main() {
 		log.Infof("Thumbnail generation enabled (max: %dx%d)", cfg.Thumbnails.MaxWidth, cfg.Thumbnails.MaxHeight)
 	}
 
-	// Initialize image recognition classifier if enabled
-	var classifier recognition.Classifier
-	if cfg.Recognition.Enabled {
-		switch cfg.Recognition.Provider {
-		case "ollama":
-			classifier = recognition.NewOllamaClassifier(
-				cfg.Recognition.OllamaURL,
-				cfg.Recognition.Model,
-				cfg.Recognition.ConfidenceThreshold,
-				cfg.Recognition.NSFWDetection,
-			)
-			log.Infof("Image recognition enabled with Ollama (model: %s)", cfg.Recognition.Model)
-		case "huggingface":
-			if cfg.Recognition.HuggingFaceAPIKey == "" {
-				log.Fatalf("HuggingFace API key is required when provider is 'huggingface'")
-			}
-			classifier = recognition.NewHuggingFaceClassifier(
-				cfg.Recognition.HuggingFaceAPIKey,
-				cfg.Recognition.Model,
-				cfg.Recognition.ConfidenceThreshold,
-				cfg.Recognition.NSFWDetection,
-			)
-			log.Infof("Image recognition enabled with HuggingFace (model: %s)", cfg.Recognition.Model)
-		case "gradio_space":
-			if cfg.Recognition.GradioSpaceURL == "" {
-				log.Fatalf("Gradio Space URL is required when provider is 'gradio_space'")
-			}
-			classifier = recognition.NewGradioSpaceClassifier(
-				cfg.Recognition.GradioSpaceURL,
-				cfg.Recognition.GradioSpaceAPIKey,
-				cfg.Recognition.ConfidenceThreshold,
-				cfg.Recognition.NSFWDetection,
-			)
-			log.Infof("Image recognition enabled with Gradio Space (%s)", cfg.Recognition.GradioSpaceURL)
-		default:
-			log.Warnf("Unknown recognition provider: %s. Recognition will be disabled.", cfg.Recognition.Provider)
-		}
-	}
-
-	// Initialize tag manager
-	tagManager := tags.NewManager(db, classifier, cfg.Recognition.AutoTag)
-
 	// Initialize scraper
 	s := scraper.New(cfg, apiClient, db, dl)
 
 	// Start web server if enabled
 	if cfg.WebServer.Enabled {
-		webServer := web.New(cfg, *configPath, db, progressTracker, tagManager, thumbnailGen)
+		webServer := web.New(cfg, *configPath, db, progressTracker, thumbnailGen)
 		go func() {
 			log.Infof("Web UI enabled at http://%s:%d", cfg.WebServer.Host, cfg.WebServer.Port)
 			if err := webServer.Start(); err != nil {

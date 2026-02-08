@@ -17,7 +17,6 @@ type Config struct {
 	RunMode     RunModeConfig     `yaml:"run_mode" json:"run_mode"`
 	WebServer   WebServerConfig   `yaml:"web_server" json:"web_server"`
 	Thumbnails  ThumbnailConfig   `yaml:"thumbnails" json:"thumbnails"`
-	Recognition RecognitionConfig `yaml:"recognition" json:"recognition"`
 	Search      SearchConfig      `yaml:"search" json:"search"`
 }
 
@@ -75,20 +74,6 @@ type ThumbnailConfig struct {
 	VideoMethod string `yaml:"video_method" json:"video_method"`   // Method for video thumbnails (ffmpeg, frame_extract)
 }
 
-// RecognitionConfig contains image recognition settings
-type RecognitionConfig struct {
-	Enabled             bool    `yaml:"enabled" json:"enabled"`                               // Enable image recognition
-	Provider            string  `yaml:"provider" json:"provider"`                             // Recognition provider (ollama, huggingface, gradio_space)
-	OllamaURL           string  `yaml:"ollama_url" json:"ollama_url"`                         // Ollama API URL
-	HuggingFaceAPIKey   string  `yaml:"huggingface_api_key" json:"huggingface_api_key"`       // HuggingFace API key
-	GradioSpaceURL      string  `yaml:"gradio_space_url" json:"gradio_space_url"`             // Gradio Space URL (e.g., https://user-space.hf.space)
-	GradioSpaceAPIKey   string  `yaml:"gradio_space_api_key" json:"gradio_space_api_key"`     // Optional API key for private Gradio Spaces
-	Model               string  `yaml:"model" json:"model"`                                   // Model to use (provider-specific)
-	AutoTag             bool    `yaml:"auto_tag" json:"auto_tag"`                             // Automatically create tags from classifications
-	NSFWDetection       bool    `yaml:"nsfw_detection" json:"nsfw_detection"`                 // Enable NSFW content detection
-	ConfidenceThreshold float64 `yaml:"confidence_threshold" json:"confidence_threshold"`     // Minimum confidence for auto-tagging (0.0-1.0)
-}
-
 // SearchConfig contains search settings
 type SearchConfig struct {
 	RebuildIndex bool `yaml:"rebuild_index" json:"rebuild_index"` // Rebuild FTS index on startup
@@ -126,7 +111,7 @@ func SaveConfig(path string, config *Config) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
@@ -192,7 +177,7 @@ func (c *Config) SetDefaults() {
 
 	// Web server defaults - enabled by default
 	if c.WebServer.Port == 0 {
-		c.WebServer.Port = 8080
+		c.WebServer.Port = 8081
 	}
 	if c.WebServer.Host == "" {
 		c.WebServer.Host = "localhost"
@@ -217,24 +202,6 @@ func (c *Config) SetDefaults() {
 		c.Thumbnails.VideoMethod = "ffmpeg"
 	}
 
-	// Recognition defaults
-	if c.Recognition.Provider == "" {
-		c.Recognition.Provider = "ollama"
-	}
-	if c.Recognition.OllamaURL == "" {
-		c.Recognition.OllamaURL = "http://localhost:11434"
-	}
-	if c.Recognition.Model == "" {
-		// Set default model based on provider
-		if c.Recognition.Provider == "huggingface" {
-			c.Recognition.Model = "Salesforce/blip-image-captioning-base"
-		} else {
-			c.Recognition.Model = "llama3.2-vision:latest"
-		}
-	}
-	if c.Recognition.ConfidenceThreshold == 0 {
-		c.Recognition.ConfidenceThreshold = 0.6
-	}
 }
 
 // normalizeSortType converts user-friendly sort type names to API format

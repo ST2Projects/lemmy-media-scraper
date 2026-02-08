@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # Go backend: scraper + API server
   lemmy-scraper:
     # Pull from GitHub Container Registry
     image: ghcr.io/st2projects/lemmy-media-scraper:latest
@@ -13,7 +14,7 @@ services:
     container_name: lemmy-scraper
     restart: unless-stopped
 
-    # Mount volumes for config and downloads
+    # Mount volumes for config, downloads, and thumbnails
     volumes:
       # Config directory - place your config.yaml here
       - ./config:/config:ro
@@ -22,33 +23,17 @@ services:
       # Thumbnails directory
       - ./thumbnails:/thumbnails:rw
 
-    # Expose web UI port (if web_server.enabled: true in config)
-    ports:
-      - "8080:8080"
+    # Go API is only accessible via the internal Docker network (scraper-network).
+    # No host port mapping — all external access goes through the lemmy-web frontend.
 
-    # Environment variables (optional)
+    # Environment variables
     environment:
       - TZ=UTC
       - CONFIG_PATH=/config/config.yaml
 
-    # Connect to Ollama service
-    depends_on:
-      ollama:
-        condition: service_healthy
-
     # Use custom network
     networks:
       - scraper-network
-
-    # Resource limits (optional - adjust as needed)
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '2'
-    #       memory: 1G
-    #     reservations:
-    #       cpus: '0.5'
-    #       memory: 256M
 
     # Logging configuration
     logging:
@@ -65,53 +50,57 @@ services:
       retries: 3
       start_period: 5s
 
-  # Ollama service for AI-powered image recognition
-  ollama:
-    image: ollama/ollama:latest
-    container_name: lemmy-scraper-ollama
+  # SvelteKit web UI frontend
+  lemmy-web:
+    # Pull from GitHub Container Registry
+    image: ghcr.io/st2projects/lemmy-media-scraper-web:latest
+
+    # For local development, use build instead:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.web
+
+    container_name: lemmy-web
     restart: unless-stopped
+    depends_on:
+      lemmy-scraper:
+        condition: service_healthy
 
-    # GPU support (optional - uncomment for NVIDIA GPU)
-    # runtime: nvidia
-    # environment:
-    #   - NVIDIA_VISIBLE_DEVICES=all
-
-    # Volumes for model storage
-    volumes:
-      - ollama-models:/root/.ollama
-
-    # Expose Ollama API port
+    # Expose the web UI port
     ports:
-      - "11434:11434"
+      - "8080:8080"
 
-    # Use custom network
+    # Environment variables
+    environment:
+      - TZ=UTC
+      - PORT=8080
+      # The SvelteKit server-side routes proxy API calls to the Go backend
+      - GO_BACKEND_URL=http://lemmy-scraper:8081
+      # SvelteKit ORIGIN setting for CSRF protection
+      - ORIGIN=http://localhost:8080
+      # WebSocket URL for real-time progress updates (browser connects directly to Go backend)
+      - PUBLIC_WS_URL=ws://localhost:8081
+
+    # Use custom network (same as backend for inter-service communication)
     networks:
       - scraper-network
 
-    # Resource limits (adjust based on your system)
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
-        reservations:
-          cpus: '2'
-          memory: 4G
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
     # Health check
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 10s
 
 # Networks
 networks:
   scraper-network:
     driver: bridge
-
-# Volumes
-volumes:
-  ollama-models:
-    driver: local

@@ -1,0 +1,42 @@
+# Stage 1: Build SvelteKit frontend
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+COPY web/package*.json ./
+RUN npm ci
+
+COPY web/ ./
+RUN BETTER_AUTH_SECRET=build-placeholder npm run build
+
+# Stage 2: Production runtime using Bun (avoids using node directly)
+FROM oven/bun:1-alpine
+
+# Create application directory (use existing 'bun' user from base image)
+RUN mkdir -p /app && chown bun:bun /app
+
+WORKDIR /app
+
+# Copy built output and production dependencies from builder
+COPY --from=builder /app/build ./build
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+
+# Switch to non-root user
+USER bun
+
+# Expose SvelteKit port
+EXPOSE 8080
+
+# Environment variables
+ENV PORT=8080
+ENV GO_BACKEND_URL=http://lemmy-scraper:8081
+ENV ORIGIN=http://localhost:8080
+# WebSocket URL for browser to connect directly to Go backend for real-time progress
+ENV PUBLIC_WS_URL=ws://localhost:8081
+
+# Health check against the SvelteKit server
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD wget -q --spider http://localhost:8080/ || exit 1
+
+# Start with Bun instead of Node
+CMD ["bun", "run", "build/index.js"]
