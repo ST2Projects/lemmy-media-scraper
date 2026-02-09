@@ -740,6 +740,28 @@ func (db *DB) GetThumbnailPath(mediaID int64) (string, error) {
 	return thumbnailPath, nil
 }
 
+// GetMediaWithoutThumbnails returns media items that don't have thumbnails generated
+func (db *DB) GetMediaWithoutThumbnails() ([]models.ScrapedMedia, error) {
+	query := `
+		SELECT sm.id, sm.post_id, sm.post_title, sm.community_name, sm.community_id,
+		       sm.author_name, sm.author_id, sm.media_url, sm.media_hash,
+		       sm.file_name, sm.file_path, sm.file_size, sm.media_type,
+		       sm.post_url, sm.post_score, sm.post_created, sm.downloaded_at
+		FROM scraped_media sm
+		LEFT JOIN media_thumbnails mt ON sm.id = mt.media_id
+		WHERE mt.media_id IS NULL
+		  AND sm.media_type IN ('image', 'video')
+		ORDER BY sm.id ASC
+	`
+
+	var media []models.ScrapedMedia
+	if err := db.Select(&media, query); err != nil {
+		return nil, fmt.Errorf("failed to query media without thumbnails: %w", err)
+	}
+
+	return media, nil
+}
+
 // Scraper run tracking methods
 
 // StartScraperRun creates a new scraper run record

@@ -7,25 +7,28 @@ import (
 	"github.com/ST2Projects/lemmy-media-scraper/internal/config"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/database"
 	"github.com/ST2Projects/lemmy-media-scraper/internal/downloader"
+	"github.com/ST2Projects/lemmy-media-scraper/internal/thumbnails"
 	"github.com/ST2Projects/lemmy-media-scraper/pkg/models"
 	log "github.com/sirupsen/logrus"
 )
 
 // Scraper handles the scraping logic
 type Scraper struct {
-	Config     *config.Config
-	API        *api.Client
-	DB         *database.DB
-	Downloader *downloader.Downloader
+	Config       *config.Config
+	API          *api.Client
+	DB           *database.DB
+	Downloader   *downloader.Downloader
+	ThumbnailGen *thumbnails.Generator
 }
 
 // New creates a new Scraper instance
-func New(cfg *config.Config, apiClient *api.Client, db *database.DB, dl *downloader.Downloader) *Scraper {
+func New(cfg *config.Config, apiClient *api.Client, db *database.DB, dl *downloader.Downloader, thumbnailGen *thumbnails.Generator) *Scraper {
 	return &Scraper{
-		Config:     cfg,
-		API:        apiClient,
-		DB:         db,
-		Downloader: dl,
+		Config:       cfg,
+		API:          apiClient,
+		DB:           db,
+		Downloader:   dl,
+		ThumbnailGen: thumbnailGen,
 	}
 }
 
@@ -202,7 +205,7 @@ func (s *Scraper) scrapePosts(params api.GetPostsParams, source string, currentC
 					continue
 				}
 
-				_, err := s.Downloader.DownloadMedia(mediaURL, postView)
+				media, err := s.Downloader.DownloadMedia(mediaURL, postView)
 				if err != nil {
 					if strings.Contains(err.Error(), "already exists") {
 						log.Debugf("Media already exists: %s", mediaURL)
@@ -213,6 +216,9 @@ func (s *Scraper) scrapePosts(params api.GetPostsParams, source string, currentC
 					}
 					continue
 				}
+
+				// Generate thumbnail if enabled
+				s.generateThumbnail(media)
 
 				downloaded++
 				mediaDownloaded++
@@ -274,6 +280,39 @@ func (s *Scraper) scrapeComments(postID int64) {
 	}
 
 	log.Debugf("Saved %d/%d comments for post %d", savedCount, len(commentsResp.Comments), postID)
+}
+
+// generateThumbnail creates a thumbnail for a downloaded media item
+func (s *Scraper) generateThumbnail(media *models.ScrapedMedia) {
+	if s.ThumbnailGen == nil {
+		return
+	}
+
+	// Map stored media type ("image", "video") to MIME-style prefix
+	// that GenerateThumbnail expects ("image/*", "video/*")
+	var mimeType string
+	switch media.MediaType {
+	case "image":
+		mimeType = "image/jpeg"
+	case "video":
+		mimeType = "video/mp4"
+	default:
+		log.Debugf("Skipping thumbnail for unsupported media type: %s", media.MediaType)
+		return
+	}
+
+	thumbnailPath, width, height, err := s.ThumbnailGen.GenerateThumbnail(media.FilePath, mimeType)
+	if err != nil {
+		log.Errorf("Failed to generate thumbnail for media %d: %v", media.ID, err)
+		return
+	}
+
+	if err := s.DB.SaveThumbnail(media.ID, thumbnailPath, width, height); err != nil {
+		log.Errorf("Failed to save thumbnail metadata for media %d: %v", media.ID, err)
+		return
+	}
+
+	log.Debugf("Generated thumbnail for media %d: %s (%dx%d)", media.ID, thumbnailPath, width, height)
 }
 
 // extractMediaURLs extracts all media URLs from a post

@@ -106,8 +106,13 @@ func main() {
 		log.Infof("Thumbnail generation enabled (max: %dx%d)", cfg.Thumbnails.MaxWidth, cfg.Thumbnails.MaxHeight)
 	}
 
+	// Generate thumbnails for existing media that don't have them
+	if thumbnailGen != nil {
+		go thumbnails.BackfillThumbnails(thumbnailGen, db)
+	}
+
 	// Initialize scraper
-	s := scraper.New(cfg, apiClient, db, dl)
+	s := scraper.New(cfg, apiClient, db, dl, thumbnailGen)
 
 	// Start web server if enabled
 	if cfg.WebServer.Enabled {
