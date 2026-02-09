@@ -1,5 +1,5 @@
 # Stage 1: Build SvelteKit frontend
-FROM node:20-alpine AS builder
+FROM node:25-alpine AS builder
 WORKDIR /app
 
 COPY web/package*.json ./
@@ -9,7 +9,7 @@ COPY web/ ./
 RUN BETTER_AUTH_SECRET=build-placeholder npm run build
 
 # Stage 2: Production runtime
-FROM node:20-alpine
+FROM node:25-alpine
 
 # Create application directory with non-root user
 RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 && mkdir -p /app && chown nodejs:nodejs /app
