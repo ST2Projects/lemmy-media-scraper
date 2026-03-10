@@ -1,5 +1,9 @@
 # Lemmy Media Scraper
 
+>[!IMPORTANT]
+> Due to recent github outages this repo has been migrated to [https://gitlab.com/st2projects1/abandoned-by-me-dev
+](https://gitlab.com/st2projects1/lemmy-media-scraper)
+
 A Go-based tool for scraping and downloading media (images, videos, and other files) from Lemmy instances. Features intelligent deduplication using content hashing and comprehensive metadata storage.
 
 > [!WARNING]
